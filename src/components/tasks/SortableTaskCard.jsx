@@ -13,18 +13,24 @@ const SortableTaskCard = ({ task, onClick }) => {
     setNodeRef,
     transform,
     transition,
-    isDragging
+    isDragging,
+    isOver
   } = useSortable({ id: dragId })
 
   const style = {
     transform: CSS.Transform.toString(transform),
-    transition
+    transition,
+    // Improve drag performance on mobile
+    willChange: isDragging ? 'transform' : undefined,
+    // Elevate dragging card
+    zIndex: isDragging ? 50 : undefined
   }
 
   return (
     <div
       ref={setNodeRef}
       style={style}
+      className={`w-full touch-manipulation select-none ${isDragging ? 'cursor-grabbing' : 'cursor-grab'}`}
       {...attributes}
       {...listeners}
     >

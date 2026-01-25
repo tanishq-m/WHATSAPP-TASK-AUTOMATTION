@@ -75,4 +75,13 @@ export const getAvatarColor = (name) => {
   return colors[index]
 }
 
+export const sortTasksByDueDate = (tasks, ascending = true) => {
+  return [...tasks].sort((a, b) => {
+    // Tasks without due dates go to the end
+    const dateA = a.dueDate ? new Date(a.dueDate) : new Date('9999-12-31')
+    const dateB = b.dueDate ? new Date(b.dueDate) : new Date('9999-12-31')
+    return ascending ? dateA - dateB : dateB - dateA
+  })
+}
+
 

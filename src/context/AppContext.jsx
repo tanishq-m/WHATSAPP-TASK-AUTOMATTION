@@ -25,18 +25,26 @@ export const AppProvider = ({ children }) => {
     setLoading(true)
     
     let loadedTasks = []
+    let loadedProjects = []
+    let loadedEmployees = []
+    let apiSuccess = false
     
     try {
       // Try to fetch employees from backend API
       console.log("🔄 Loading employees from backend API...")
       const employeesData = await apiService.getEmployees()
+      loadedEmployees = employeesData
       setEmployees(employeesData)
-      console.log("✅ Employees loaded from API")
+      console.log("✅ Employees loaded from API:", employeesData.length)
+      
+      // Sync to localStorage
+      storageService.setEmployees(employeesData)
     } catch (error) {
       // Fallback to localStorage if API fails
       console.warn("⚠️ API failed, falling back to localStorage for employees")
       console.error("Error:", error)
-      setEmployees(storageService.getEmployees())
+      loadedEmployees = storageService.getEmployees()
+      setEmployees(loadedEmployees)
       showToast("Using offline data - backend not connected", "warning")
     }
 
@@ -44,15 +52,17 @@ export const AppProvider = ({ children }) => {
     try {
       console.log("🔄 Loading tasks from backend API...")
       const tasksData = await apiService.getTasks()
-      setTasks(tasksData)
       loadedTasks = tasksData
-      console.log("✅ Tasks loaded from API")
+      setTasks(tasksData)
+      console.log("✅ Tasks loaded from API:", tasksData.length)
+      
+      // Sync to localStorage
+      storageService.setTasks(tasksData)
     } catch (error) {
       console.warn("⚠️ API failed, falling back to localStorage for tasks")
       console.error("Error:", error)
-      const tasksData = storageService.getTasks()
-      setTasks(tasksData)
-      loadedTasks = tasksData
+      loadedTasks = storageService.getTasks()
+      setTasks(loadedTasks)
       if (!toast.show) {
         showToast("Using offline data for tasks", "warning")
       }
@@ -62,17 +72,27 @@ export const AppProvider = ({ children }) => {
     try {
       console.log("🔄 Loading projects from backend API...")
       const projectsData = await apiService.getProjects()
+      loadedProjects = projectsData
       // Calculate stats for projects using loaded tasks
       const projectsWithStats = calculateProjectStats(projectsData, loadedTasks)
       setProjects(projectsWithStats)
-      console.log("✅ Projects loaded from API")
+      console.log("✅ Projects loaded from API:", projectsData.length)
+      apiSuccess = true
+      
+      // Sync to localStorage
+      storageService.setProjects(projectsData)
     } catch (error) {
       console.warn("⚠️ API failed, falling back to localStorage for projects")
       console.error("Error:", error)
+      loadedProjects = storageService.getProjects()
       setProjects(getProjectsWithStats())
       if (!toast.show) { // Only show toast if not already showing
         showToast("Using offline data for projects", "warning")
       }
+    }
+
+    if (apiSuccess) {
+      console.log("✅ All data synced from backend to localStorage")
     }
 
     setTimerConfig(storageService.getTimerConfig())
@@ -90,6 +110,14 @@ export const AppProvider = ({ children }) => {
       const taskCount = projectTasks.length
       const progress = calculateProgress(taskCount, completedTasks)
       
+      // Count unique team members with assigned tasks
+      const uniqueAssignedMembers = new Set(
+        projectTasks
+          .filter(t => t.assignedTo) // Only tasks with assigned members
+          .map(t => t.assignedTo)
+      )
+      const activeTeamMembers = uniqueAssignedMembers.size
+      
       return {
         ...project,
         taskCount,
@@ -97,7 +125,8 @@ export const AppProvider = ({ children }) => {
         unassignedTasks,
         inProgressTasks,
         pendingTasks,
-        progress
+        progress,
+        activeTeamMembers
       }
     })
   }
@@ -116,6 +145,14 @@ export const AppProvider = ({ children }) => {
       const taskCount = projectTasks.length
       const progress = calculateProgress(taskCount, completedTasks)
       
+      // Count unique team members with assigned tasks
+      const uniqueAssignedMembers = new Set(
+        projectTasks
+          .filter(t => t.assignedTo) // Only tasks with assigned members
+          .map(t => t.assignedTo)
+      )
+      const activeTeamMembers = uniqueAssignedMembers.size
+      
       return {
         ...project,
         taskCount,
@@ -123,7 +160,8 @@ export const AppProvider = ({ children }) => {
         unassignedTasks,
         inProgressTasks,
         pendingTasks,
-        progress
+        progress,
+        activeTeamMembers
       }
     })
   }
@@ -213,9 +251,13 @@ export const AppProvider = ({ children }) => {
     const previousTasks = [...tasks]
     
     // Optimistic update - update UI immediately for better UX
+    // ROBUST ID MATCHING: Match by taskId, id, or either field
     setTasks(prev => prev.map(t => {
-      const taskId = t.taskId || t.id
-      if (taskId === id) {
+      // Check all possible ID fields for maximum compatibility
+      const matchesById = t.id === id || t.taskId === id
+      const matchesByTaskId = t.id === id || t.taskId === id
+      
+      if (matchesById || matchesByTaskId) {
         return { ...t, ...updates }
       }
       return t

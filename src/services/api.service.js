@@ -61,7 +61,7 @@ export const getEmployees = async () => {
     
     if (result.success) {
       console.log("✅ API: Employees fetched successfully", result.data);
-      return result.data;
+      return toCamelCase(result.data);
     } else {
       throw new Error(result.error || "Failed to fetch employees");
     }
@@ -90,7 +90,7 @@ export const getEmployeeById = async (id) => {
     
     if (result.success) {
       console.log("✅ API: Employee fetched successfully", result.data);
-      return result.data;
+      return toCamelCase(result.data);
     } else {
       throw new Error(result.error || "Employee not found");
     }
@@ -118,7 +118,8 @@ export const getProjects = async () => {
     
     if (result.success) {
       console.log("✅ API: Projects fetched successfully", result.data);
-      return result.data;
+      // Transform snake_case to camelCase for frontend compatibility
+      return toCamelCase(result.data);
     } else {
       throw new Error(result.error || "Failed to fetch projects");
     }
@@ -147,7 +148,7 @@ export const getProjectById = async (id) => {
     
     if (result.success) {
       console.log("✅ API: Project fetched successfully", result.data);
-      return result.data;
+      return toCamelCase(result.data);
     } else {
       throw new Error(result.error || "Project not found");
     }
@@ -182,7 +183,7 @@ export const createProject = async (projectData) => {
     
     if (result.success) {
       console.log("✅ API: Project created successfully", result.data);
-      return result.data;
+      return toCamelCase(result.data);
     } else {
       throw new Error(result.error || "Failed to create project");
     }
@@ -283,7 +284,8 @@ export const getTasks = async (projectId = null) => {
     if (result.success) {
       console.log("✅ API: Tasks fetched successfully", result.data);
       // Transform snake_case to camelCase for frontend compatibility
-      return toCamelCase(result.data);
+      // Handle null/undefined data by returning empty array
+      return toCamelCase(result.data || []);
     } else {
       throw new Error(result.error || "Failed to fetch tasks");
     }
@@ -306,7 +308,7 @@ export const getTaskById = async (taskId) => {
 
     if (result.success) {
       console.log(`✅ API: Task ${taskId} fetched successfully`);
-      return result.data;
+      return toCamelCase(result.data);
     } else {
       throw new Error(result.error || "Failed to fetch task");
     }
@@ -406,7 +408,7 @@ export const deleteTask = async (taskId) => {
 /**
  * Send task to employee via WhatsApp with interactive buttons
  * @param {string} taskId - Task ID
- * @returns {Promise<Object>} Success response
+ * @returns {Promise<Object>} Success response with WhatsApp data
  */
 export const sendTaskToWhatsApp = async (taskId) => {
   try {
@@ -419,7 +421,7 @@ export const sendTaskToWhatsApp = async (taskId) => {
 
     if (result.success) {
       console.log(`✅ API: Task ${taskId} sent to WhatsApp successfully`);
-      return result;
+      return toCamelCase(result.data || {});
     } else {
       throw new Error(result.error || "Failed to send task to WhatsApp");
     }
@@ -443,7 +445,7 @@ export const getTaskWhatsAppStatus = async (taskId) => {
 
     if (result.success) {
       console.log(`✅ API: WhatsApp status retrieved for task ${taskId}`);
-      return result.data;
+      return toCamelCase(result.data);
     } else {
       throw new Error(result.error || "Failed to get WhatsApp status");
     }

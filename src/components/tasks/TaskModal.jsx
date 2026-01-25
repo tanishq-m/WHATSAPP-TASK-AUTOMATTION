@@ -60,7 +60,9 @@ const TaskModal = ({ isOpen, onClose, task = null, projectId = null }) => {
     }
 
     if (isEditing) {
-      updateTask(task.taskId, formData)
+      // Use task.id for consistency (toCamelCase ensures id === taskId)
+      const taskId = task.id || task.taskId
+      updateTask(taskId, formData)
     } else {
       const newTask = {
         id: generateId('task'),
@@ -79,7 +81,9 @@ const TaskModal = ({ isOpen, onClose, task = null, projectId = null }) => {
 
   const handleSendToWhatsApp = () => {
     if (task) {
-      sendTaskToWhatsApp(task.taskId)
+      // Use consistent ID pattern (toCamelCase ensures id === taskId)
+      const taskId = task.id || task.taskId
+      sendTaskToWhatsApp(taskId)
     }
   }
 

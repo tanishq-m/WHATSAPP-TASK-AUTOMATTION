@@ -56,7 +56,7 @@ const CreateProjectModal = ({ isOpen, onClose, project = null }) => {
     })
   }
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault()
     
     const validation = validateProject(formData)
@@ -74,7 +74,7 @@ const CreateProjectModal = ({ isOpen, onClose, project = null }) => {
         endDate: formData.endDate,
         assignedEmployees: formData.assignedEmployees
       }
-      updateProject(project.id, updates)
+      await updateProject(project.id, updates)
     } else {
       // Create new project
       const newProject = {
@@ -87,9 +87,9 @@ const CreateProjectModal = ({ isOpen, onClose, project = null }) => {
         assignedEmployees: formData.assignedEmployees,
         createdAt: new Date().toISOString()
       }
-      addProject(newProject)
-      // Navigate to the new project
-      navigate(`/project/${newProject.id}`)
+      // Wait for project creation to complete
+      await addProject(newProject)
+      // Stay on the dashboard - don't navigate
     }
     
     // Reset form
@@ -146,25 +146,28 @@ const CreateProjectModal = ({ isOpen, onClose, project = null }) => {
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <DatePicker
-            label="Start Date"
+            label="Start Date (Optional)"
             value={formData.startDate}
             onChange={(e) => handleChange('startDate', e.target.value)}
             error={errors.startDate}
-            required
           />
 
           <DatePicker
-            label="End Date"
+            label="End Date (Optional)"
             value={formData.endDate}
             onChange={(e) => handleChange('endDate', e.target.value)}
             min={formData.startDate}
             error={errors.endDate}
-            required
           />
         </div>
 
         <div>
           <label className="label">Assign Team Members</label>
+          {isEditing && formData.assignedEmployees.length > 0 && (
+            <p className="text-sm text-gray-600 mb-2">
+              {formData.assignedEmployees.length} team member{formData.assignedEmployees.length !== 1 ? 's' : ''} currently assigned
+            </p>
+          )}
           <div className="space-y-2 mt-2">
             {employees.map((employee) => (
               <label

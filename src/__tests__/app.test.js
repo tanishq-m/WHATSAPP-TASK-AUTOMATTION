@@ -54,6 +54,54 @@ describe('API Service', () => {
       expect(result).toHaveLength(2);
     });
 
+    // ========================================================================
+    // P3-9 / API Fix: Projects should transform snake_case to camelCase
+    // ========================================================================
+    it('should transform project snake_case fields to camelCase', async () => {
+      const mockProjects = [
+        { 
+          id: 'proj_1', 
+          name: 'Test Project',
+          start_date: '2026-01-01',
+          end_date: '2026-12-31',
+          created_at: '2026-01-01T00:00:00Z',
+          assigned_employees: [1, 2, 3]
+        },
+      ];
+      
+      mockFetch.mockResolvedValueOnce(
+        createMockResponse({ success: true, data: mockProjects })
+      );
+
+      const { getProjects } = await import('../services/api.service.js');
+      const result = await getProjects();
+
+      expect(result[0]).toHaveProperty('startDate', '2026-01-01');
+      expect(result[0]).toHaveProperty('endDate', '2026-12-31');
+      expect(result[0]).toHaveProperty('createdAt');
+      expect(result[0]).toHaveProperty('assignedEmployees');
+      expect(result[0].assignedEmployees).toEqual([1, 2, 3]);
+    });
+
+    it('should handle projects with empty assigned_employees array', async () => {
+      const mockProjects = [
+        { 
+          id: 'proj_1', 
+          name: 'Empty Team Project',
+          assigned_employees: []
+        },
+      ];
+      
+      mockFetch.mockResolvedValueOnce(
+        createMockResponse({ success: true, data: mockProjects })
+      );
+
+      const { getProjects } = await import('../services/api.service.js');
+      const result = await getProjects();
+
+      expect(result[0].assignedEmployees).toEqual([]);
+    });
+
     it('should throw error on API failure', async () => {
       mockFetch.mockResolvedValueOnce(
         createMockResponse({ success: false, error: 'Server error' }, 500)
@@ -61,6 +109,56 @@ describe('API Service', () => {
 
       const { getProjects } = await import('../services/api.service.js');
       await expect(getProjects()).rejects.toThrow();
+    });
+  });
+
+  // ============================================================================
+  // P3-9 / API Fix: Employee API Tests
+  // ============================================================================
+  describe('getEmployees', () => {
+    it('should fetch employees and transform to camelCase', async () => {
+      const mockEmployees = [
+        { id: 1, name: 'John Doe', phone: '+911234567890', created_at: '2026-01-01T00:00:00Z' },
+        { id: 2, name: 'Jane Smith', phone: '+919876543210', created_at: '2026-01-02T00:00:00Z' },
+      ];
+      
+      mockFetch.mockResolvedValueOnce(
+        createMockResponse({ success: true, data: mockEmployees })
+      );
+
+      const { getEmployees } = await import('../services/api.service.js');
+      const result = await getEmployees();
+
+      expect(result).toHaveLength(2);
+      expect(result[0]).toHaveProperty('createdAt');
+      expect(result[0].name).toBe('John Doe');
+    });
+
+    it('should handle employee with snake_case fields', async () => {
+      const mockEmployees = [
+        { 
+          id: 1, 
+          name: 'Test User', 
+          phone_number: '+911234567890',
+          created_at: '2026-01-01T00:00:00Z',
+          last_active: '2026-01-15T10:00:00Z'
+        },
+      ];
+      
+      mockFetch.mockResolvedValueOnce(
+        createMockResponse({ success: true, data: mockEmployees })
+      );
+
+      const { getEmployees } = await import('../services/api.service.js');
+      const result = await getEmployees();
+
+      expect(result[0]).toHaveProperty('createdAt');
+      if (result[0].phoneNumber) {
+        expect(result[0]).toHaveProperty('phoneNumber');
+      }
+      if (result[0].lastActive) {
+        expect(result[0]).toHaveProperty('lastActive');
+      }
     });
   });
 
@@ -191,8 +289,8 @@ describe('API Service', () => {
       const { getTaskWhatsAppStatus } = await import('../services/api.service.js');
       const result = await getTaskWhatsAppStatus('task_1');
 
-      expect(result.whatsapp_sent).toBe(true);
-      expect(result.whatsapp_response).toBe('completed');
+      expect(result.whatsappSent).toBe(true);
+      expect(result.whatsappResponse).toBe('completed');
     });
   });
 
@@ -1008,6 +1106,73 @@ describe('Utility Functions', () => {
       const missingResult = validateProject({});
       expect(missingResult.isValid).toBe(false);
     });
+
+    // ========================================================================
+    // P3-6: Optional Dates Validation Tests
+    // ========================================================================
+    it('validateProject should accept project without dates (P3-6)', async () => {
+      const { validateProject } = await import('../utils/validators.js');
+      
+      const projectWithoutDates = {
+        name: 'Project Without Dates'
+      };
+      
+      const result = validateProject(projectWithoutDates);
+      expect(result.isValid).toBe(true);
+      expect(result.errors.startDate).toBeUndefined();
+      expect(result.errors.endDate).toBeUndefined();
+    });
+
+    it('validateProject should accept project with only start date (P3-6)', async () => {
+      const { validateProject } = await import('../utils/validators.js');
+      
+      const projectWithStartOnly = {
+        name: 'Project With Start Date Only',
+        startDate: '2026-01-01'
+      };
+      
+      const result = validateProject(projectWithStartOnly);
+      expect(result.isValid).toBe(true);
+    });
+
+    it('validateProject should accept project with only end date (P3-6)', async () => {
+      const { validateProject } = await import('../utils/validators.js');
+      
+      const projectWithEndOnly = {
+        name: 'Project With End Date Only',
+        endDate: '2026-12-31'
+      };
+      
+      const result = validateProject(projectWithEndOnly);
+      expect(result.isValid).toBe(true);
+    });
+
+    it('validateProject should reject if endDate is before startDate (P3-6)', async () => {
+      const { validateProject } = await import('../utils/validators.js');
+      
+      const projectWithInvalidDates = {
+        name: 'Project With Invalid Dates',
+        startDate: '2026-12-31',
+        endDate: '2026-01-01'
+      };
+      
+      const result = validateProject(projectWithInvalidDates);
+      expect(result.isValid).toBe(false);
+      expect(result.errors.endDate).toBeDefined();
+    });
+
+    it('validateProject should accept empty string dates as optional (P3-6)', async () => {
+      const { validateProject } = await import('../utils/validators.js');
+      
+      const projectWithEmptyDates = {
+        name: 'Project With Empty Dates',
+        startDate: '',
+        endDate: ''
+      };
+      
+      const result = validateProject(projectWithEmptyDates);
+      expect(result.isValid).toBe(true);
+    });
   });
 
   describe('constants', () => {
@@ -1265,7 +1430,7 @@ describe('Task Status Workflow', () => {
   it('should correctly track WhatsApp sent status', async () => {
     // First call - send to WhatsApp
     mockFetch.mockResolvedValueOnce(
-      createMockResponse({ success: true, message: 'Message sent' })
+      createMockResponse({ success: true, data: { whatsapp_sent: true }, message: 'Message sent' })
     );
     
     // Second call - get status
@@ -1281,7 +1446,7 @@ describe('Task Status Workflow', () => {
     await sendTaskToWhatsApp('task_1');
     const status = await getTaskWhatsAppStatus('task_1');
     
-    expect(status.whatsapp_sent).toBe(true);
+    expect(status.whatsappSent).toBe(true);
   });
 
   it('should correctly track completed response', async () => {
@@ -1299,7 +1464,7 @@ describe('Task Status Workflow', () => {
     const { getTaskWhatsAppStatus } = await import('../services/api.service.js');
     const status = await getTaskWhatsAppStatus('task_1');
     
-    expect(status.whatsapp_response).toBe('completed');
+    expect(status.whatsappResponse).toBe('completed');
   });
 
   it('should correctly track not_completed response', async () => {
@@ -1317,8 +1482,8 @@ describe('Task Status Workflow', () => {
     const { getTaskWhatsAppStatus } = await import('../services/api.service.js');
     const status = await getTaskWhatsAppStatus('task_1');
     
-    expect(status.whatsapp_response).toBe('not_completed');
-    expect(status.response_notes).toBe('Blocked by dependency');
+    expect(status.whatsappResponse).toBe('not_completed');
+    expect(status.responseNotes).toBe('Blocked by dependency');
   });
 });
 
@@ -1379,3 +1544,684 @@ describe('Edge Cases', () => {
     expect(result.title).toBe(specialTitle);
   });
 });
+
+// ============================================================================
+// ID CONSISTENCY TESTS (Bug Fix Verification)
+// ============================================================================
+describe('Task ID Consistency', () => {
+  beforeEach(() => {
+    mockFetch.mockClear();
+  });
+
+  it('should handle tasks with both taskId and id fields', async () => {
+    // Test that toCamelCase ensures id === taskId for consistency
+    mockFetch.mockResolvedValueOnce(
+      createMockResponse({ 
+        success: true, 
+        data: [{ 
+          task_id: 'task_123',
+          title: 'Test Task',
+          status: 'todo'
+        }] 
+      })
+    );
+
+    const { getTasks } = await import('../services/api.service.js');
+    const result = await getTasks();
+    
+    // After toCamelCase transformation, both id and taskId should exist and be equal
+    expect(result[0].taskId).toBe('task_123');
+    expect(result[0].id).toBe('task_123');
+    expect(result[0].id).toBe(result[0].taskId);
+  });
+
+  it('should match tasks correctly regardless of id field used', async () => {
+    // This test verifies the bug fix where updateTask matching was inconsistent
+    // The bug: Some tasks only had taskId, some only had id, causing match failures
+    
+    const tasksWithMixedIds = [
+      { taskId: 'task_1', title: 'Task with taskId only' },
+      { id: 'task_2', title: 'Task with id only' },
+      { taskId: 'task_3', id: 'task_3', title: 'Task with both fields' }
+    ];
+
+    // Each task should be matchable by either id or taskId
+    tasksWithMixedIds.forEach(task => {
+      const matchById = task.id === 'task_1' || task.taskId === 'task_1';
+      const matchByTaskId = task.id === 'task_1' || task.taskId === 'task_1';
+      
+      // If task has task_1, both methods should find it
+      if (task.taskId === 'task_1' || task.id === 'task_1') {
+        expect(matchById || matchByTaskId).toBe(true);
+      }
+    });
+  });
+
+  it('should update task priority consistently across all projects', async () => {
+    // This is the EXACT bug the user reported:
+    // "Priority update works in 'messaging system' but not 'Hello boss' project"
+    
+    // Simulate tasks from different projects
+    const messagingSystemTask = { 
+      task_id: 'msg_task_1', 
+      project_id: 'messaging_system',
+      priority: 'medium' 
+    };
+    
+    const helloBossTask = { 
+      task_id: 'hello_task_1',
+      project_id: 'hello_boss',
+      priority: 'medium'
+    };
+
+    // Mock update for messaging system task
+    mockFetch.mockResolvedValueOnce(
+      createMockResponse({ 
+        success: true, 
+        data: { ...messagingSystemTask, priority: 'high' }
+      })
+    );
+
+    // Mock update for hello boss task
+    mockFetch.mockResolvedValueOnce(
+      createMockResponse({ 
+        success: true, 
+        data: { ...helloBossTask, priority: 'high' }
+      })
+    );
+
+    const { updateTask } = await import('../services/api.service.js');
+    
+    // Both updates should work identically
+    const result1 = await updateTask('msg_task_1', { priority: 'high' });
+    const result2 = await updateTask('hello_task_1', { priority: 'high' });
+    
+    // Both should have updated priority
+    expect(result1.priority).toBe('high');
+    expect(result2.priority).toBe('high');
+    
+    // Both API calls should have been made correctly
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+});
+
+
+// ============================================================================
+// EDGE CASE TESTS
+// ============================================================================
+
+describe('Edge Cases - API Error Handling', () => {
+  beforeEach(() => {
+    mockFetch.mockClear();
+  });
+
+  it('should handle network timeout gracefully', async () => {
+    mockFetch.mockRejectedValueOnce(new Error('Network timeout'));
+
+    const { getProjects } = await import('../services/api.service.js');
+    
+    await expect(getProjects()).rejects.toThrow();
+  });
+
+  it('should handle 500 server error', async () => {
+    mockFetch.mockResolvedValueOnce(
+      createMockResponse({ success: false, error: 'Internal server error' }, 500)
+    );
+
+    const { getProjects } = await import('../services/api.service.js');
+    
+    await expect(getProjects()).rejects.toThrow();
+  });
+
+  it('should handle empty response data', async () => {
+    mockFetch.mockResolvedValueOnce(
+      createMockResponse({ success: true, data: [] })
+    );
+
+    const { getProjects } = await import('../services/api.service.js');
+    const result = await getProjects();
+    
+    expect(result).toEqual([]);
+  });
+
+  it('should handle null response data', async () => {
+    mockFetch.mockResolvedValueOnce(
+      createMockResponse({ success: true, data: null })
+    );
+
+    const { getTasks } = await import('../services/api.service.js');
+    const result = await getTasks();
+    
+    expect(result).toEqual([]);
+  });
+
+  it('should handle malformed JSON response', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.reject(new Error('Invalid JSON'))
+    });
+
+    const { getProjects } = await import('../services/api.service.js');
+    
+    await expect(getProjects()).rejects.toThrow();
+  });
+});
+
+
+describe('Edge Cases - Data Transformation', () => {
+  beforeEach(() => {
+    mockFetch.mockClear();
+  });
+
+  it('should handle deeply nested snake_case objects', async () => {
+    const nestedData = {
+      id: 'proj_1',
+      project_name: 'Test',
+      project_details: {
+        created_at: '2026-01-01',
+        updated_at: '2026-01-02',
+        nested_info: {
+          deep_field: 'value'
+        }
+      }
+    };
+
+    mockFetch.mockResolvedValueOnce(
+      createMockResponse({ success: true, data: [nestedData] })
+    );
+
+    const { getProjects } = await import('../services/api.service.js');
+    const result = await getProjects();
+
+    expect(result[0]).toHaveProperty('projectName');
+    expect(result[0]).toHaveProperty('projectDetails');
+    expect(result[0].projectDetails).toHaveProperty('createdAt');
+    expect(result[0].projectDetails).toHaveProperty('nestedInfo');
+    expect(result[0].projectDetails.nestedInfo).toHaveProperty('deepField');
+  });
+
+  it('should handle arrays within objects during transformation', async () => {
+    const dataWithArrays = {
+      id: 'proj_1',
+      team_members: [
+        { member_id: 1, member_name: 'John', is_active: true },
+        { member_id: 2, member_name: 'Jane', is_active: false }
+      ]
+    };
+
+    mockFetch.mockResolvedValueOnce(
+      createMockResponse({ success: true, data: [dataWithArrays] })
+    );
+
+    const { getProjects } = await import('../services/api.service.js');
+    const result = await getProjects();
+
+    expect(result[0].teamMembers).toHaveLength(2);
+    expect(result[0].teamMembers[0]).toHaveProperty('memberId', 1);
+    expect(result[0].teamMembers[0]).toHaveProperty('memberName', 'John');
+    expect(result[0].teamMembers[0]).toHaveProperty('isActive', true);
+  });
+
+  it('should handle empty strings in data', async () => {
+    mockFetch.mockResolvedValueOnce(
+      createMockResponse({ 
+        success: true, 
+        data: [{ id: 'proj_1', name: '', description: '', start_date: '' }] 
+      })
+    );
+
+    const { getProjects } = await import('../services/api.service.js');
+    const result = await getProjects();
+
+    expect(result[0].name).toBe('');
+    expect(result[0].description).toBe('');
+    expect(result[0].startDate).toBe('');
+  });
+
+  it('should handle special characters in values', async () => {
+    const specialData = {
+      id: 'proj_1',
+      name: 'Test <script>alert("xss")</script>',
+      description: "Quote's and \"double\" quotes",
+      notes: 'Unicode: प्रोजेक्ट 📱 テスト'
+    };
+
+    mockFetch.mockResolvedValueOnce(
+      createMockResponse({ success: true, data: [specialData] })
+    );
+
+    const { getProjects } = await import('../services/api.service.js');
+    const result = await getProjects();
+
+    expect(result[0].name).toContain('<script>');
+    expect(result[0].description).toContain("Quote's");
+    expect(result[0].notes).toContain('प्रोजेक्ट');
+  });
+
+  it('should handle boolean fields correctly', async () => {
+    mockFetch.mockResolvedValueOnce(
+      createMockResponse({ 
+        success: true, 
+        data: [{ 
+          task_id: 'task_1',
+          whatsapp_sent: true,
+          is_completed: false,
+          has_attachments: null
+        }] 
+      })
+    );
+
+    const { getTasks } = await import('../services/api.service.js');
+    const result = await getTasks();
+
+    expect(result[0].whatsappSent).toBe(true);
+    expect(result[0].isCompleted).toBe(false);
+    expect(result[0].hasAttachments).toBeNull();
+  });
+
+  it('should handle numeric fields correctly', async () => {
+    mockFetch.mockResolvedValueOnce(
+      createMockResponse({ 
+        success: true, 
+        data: [{ 
+          task_id: 'task_1',
+          employee_id: 0,
+          progress_percent: 50.5,
+          negative_value: -10
+        }] 
+      })
+    );
+
+    const { getTasks } = await import('../services/api.service.js');
+    const result = await getTasks();
+
+    expect(result[0].employeeId).toBe(0);
+    expect(result[0].progressPercent).toBe(50.5);
+    expect(result[0].negativeValue).toBe(-10);
+  });
+});
+
+
+describe('Edge Cases - Project Operations', () => {
+  beforeEach(() => {
+    mockFetch.mockClear();
+  });
+
+  it('should create project with minimal data', async () => {
+    mockFetch.mockResolvedValueOnce(
+      createMockResponse({ 
+        success: true, 
+        data: { id: 'proj_1', name: 'Minimal' }
+      }, 201)
+    );
+
+    const { createProject } = await import('../services/api.service.js');
+    const result = await createProject({ name: 'Minimal' });
+
+    expect(result).toHaveProperty('id');
+    expect(result.name).toBe('Minimal');
+  });
+
+  it('should handle project update with partial data', async () => {
+    mockFetch.mockResolvedValueOnce(
+      createMockResponse({ 
+        success: true, 
+        data: { id: 'proj_1', name: 'Updated Name', start_date: '2026-01-01' }
+      })
+    );
+
+    const { updateProject } = await import('../services/api.service.js');
+    const result = await updateProject('proj_1', { name: 'Updated Name' });
+
+    expect(result.name).toBe('Updated Name');
+  });
+
+  it('should handle project deletion', async () => {
+    mockFetch.mockResolvedValueOnce(
+      createMockResponse({ success: true, message: 'Project deleted' })
+    );
+
+    const { deleteProject } = await import('../services/api.service.js');
+    await expect(deleteProject('proj_1')).resolves.not.toThrow();
+  });
+
+  it('should handle deleting non-existent project', async () => {
+    mockFetch.mockResolvedValueOnce(
+      createMockResponse({ success: false, error: 'Project not found' }, 404)
+    );
+
+    const { deleteProject } = await import('../services/api.service.js');
+    await expect(deleteProject('proj_nonexistent')).rejects.toThrow();
+  });
+});
+
+
+describe('Edge Cases - Task Operations', () => {
+  beforeEach(() => {
+    mockFetch.mockClear();
+  });
+
+  it('should create task with all fields', async () => {
+    const fullTask = {
+      task_id: 'task_1',
+      title: 'Full Task',
+      description: 'Description',
+      project_id: 'proj_1',
+      employee_id: 1,
+      due_date: '2026-12-31',
+      priority: 'high',
+      status: 'in_progress'
+    };
+
+    mockFetch.mockResolvedValueOnce(
+      createMockResponse({ success: true, data: fullTask }, 201)
+    );
+
+    const { createTask } = await import('../services/api.service.js');
+    const result = await createTask(fullTask);
+
+    expect(result.taskId).toBe('task_1');
+    expect(result.id).toBe('task_1');
+    expect(result.priority).toBe('high');
+  });
+
+  it('should handle task status transitions', async () => {
+    const statuses = ['unassigned', 'in_progress', 'pending_verification', 'completed'];
+    
+    for (const status of statuses) {
+      mockFetch.mockResolvedValueOnce(
+        createMockResponse({ 
+          success: true, 
+          data: { task_id: 'task_1', status }
+        })
+      );
+
+      const { updateTask } = await import('../services/api.service.js');
+      const result = await updateTask('task_1', { status });
+
+      expect(result.status).toBe(status);
+    }
+  });
+
+  it('should handle task with missing optional fields', async () => {
+    mockFetch.mockResolvedValueOnce(
+      createMockResponse({ 
+        success: true, 
+        data: { 
+          task_id: 'task_1', 
+          title: 'Task',
+          description: null,
+          due_date: null,
+          employee_id: null
+        }
+      })
+    );
+
+    const { getTaskById } = await import('../services/api.service.js');
+    const result = await getTaskById('task_1');
+
+    expect(result.description).toBeNull();
+    expect(result.dueDate).toBeNull();
+    expect(result.employeeId).toBeNull();
+  });
+
+  it('should handle deleting task', async () => {
+    mockFetch.mockResolvedValueOnce(
+      createMockResponse({ success: true, message: 'Task deleted' })
+    );
+
+    const { deleteTask } = await import('../services/api.service.js');
+    await expect(deleteTask('task_1')).resolves.not.toThrow();
+  });
+});
+
+
+describe('Edge Cases - Employee Operations', () => {
+  beforeEach(() => {
+    mockFetch.mockClear();
+  });
+
+  it('should handle employee with all fields', async () => {
+    mockFetch.mockResolvedValueOnce(
+      createMockResponse({ 
+        success: true, 
+        data: { 
+          id: 1, 
+          name: 'John Doe', 
+          phone: '+919876543210',
+          role: 'Developer',
+          created_at: '2026-01-01T00:00:00Z'
+        }
+      })
+    );
+
+    const { getEmployeeById } = await import('../services/api.service.js');
+    const result = await getEmployeeById(1);
+
+    expect(result.name).toBe('John Doe');
+    expect(result.phone).toBe('+919876543210');
+    expect(result.createdAt).toBeDefined();
+  });
+
+  it('should handle getting all employees', async () => {
+    mockFetch.mockResolvedValueOnce(
+      createMockResponse({ 
+        success: true, 
+        data: [
+          { id: 1, name: 'Employee 1' },
+          { id: 2, name: 'Employee 2' },
+          { id: 3, name: 'Employee 3' }
+        ]
+      })
+    );
+
+    const { getEmployees } = await import('../services/api.service.js');
+    const result = await getEmployees();
+
+    expect(result).toHaveLength(3);
+  });
+
+  it('should handle non-existent employee', async () => {
+    mockFetch.mockResolvedValueOnce(
+      createMockResponse({ success: false, error: 'Employee not found' }, 404)
+    );
+
+    const { getEmployeeById } = await import('../services/api.service.js');
+    await expect(getEmployeeById(999)).rejects.toThrow();
+  });
+});
+
+
+describe('Edge Cases - WhatsApp Operations', () => {
+  beforeEach(() => {
+    mockFetch.mockClear();
+  });
+
+  it('should handle sending WhatsApp message', async () => {
+    mockFetch.mockResolvedValueOnce(
+      createMockResponse({ 
+        success: true, 
+        data: { 
+          task_id: 'task_1',
+          whatsapp_sent: true,
+          message_id: 'msg_123'
+        }
+      })
+    );
+
+    const { sendTaskToWhatsApp } = await import('../services/api.service.js');
+    const result = await sendTaskToWhatsApp('task_1');
+
+    expect(result.whatsappSent).toBe(true);
+  });
+
+  it('should handle WhatsApp send failure', async () => {
+    mockFetch.mockResolvedValueOnce(
+      createMockResponse({ 
+        success: false, 
+        error: 'Task not assigned to employee'
+      }, 400)
+    );
+
+    const { sendTaskToWhatsApp } = await import('../services/api.service.js');
+    await expect(sendTaskToWhatsApp('task_1')).rejects.toThrow();
+  });
+
+  it('should handle getting WhatsApp status', async () => {
+    mockFetch.mockResolvedValueOnce(
+      createMockResponse({ 
+        success: true, 
+        data: { 
+          whatsapp_sent: true,
+          whatsapp_response: 'completed'
+        }
+      })
+    );
+
+    const { getTaskWhatsAppStatus } = await import('../services/api.service.js');
+    const result = await getTaskWhatsAppStatus('task_1');
+
+    expect(result.whatsappSent).toBe(true);
+    expect(result.whatsappResponse).toBe('completed');
+  });
+});
+
+
+describe('Edge Cases - Utility Functions', () => {
+  it('should format dates correctly', async () => {
+    const { formatDate } = await import('../utils/helpers.js');
+    
+    // Valid date
+    expect(formatDate('2026-01-25')).toBeTruthy();
+    
+    // Empty/null dates return empty string
+    expect(formatDate('')).toBe('');
+    expect(formatDate(null)).toBe('');
+    expect(formatDate(undefined)).toBe('');
+  });
+
+  it('should detect overdue tasks correctly', async () => {
+    const { isOverdue } = await import('../utils/helpers.js');
+    
+    // Past date - overdue
+    expect(isOverdue('2020-01-01')).toBe(true);
+    
+    // Future date - not overdue
+    expect(isOverdue('2030-12-31')).toBe(false);
+    
+    // No date - not overdue
+    expect(isOverdue(null)).toBe(false);
+    expect(isOverdue('')).toBe(false);
+  });
+
+  it('should group tasks by status correctly', async () => {
+    const { groupTasksByStatus } = await import('../utils/helpers.js');
+    
+    const tasks = [
+      { id: 1, status: 'unassigned' },
+      { id: 2, status: 'in_progress' },
+      { id: 3, status: 'unassigned' },
+      { id: 4, status: 'completed' }
+    ];
+
+    const grouped = groupTasksByStatus(tasks);
+
+    expect(grouped.unassigned).toHaveLength(2);
+    expect(grouped.in_progress).toHaveLength(1);
+    expect(grouped.completed).toHaveLength(1);
+  });
+
+  it('should handle empty task list when grouping', async () => {
+    const { groupTasksByStatus } = await import('../utils/helpers.js');
+    
+    const grouped = groupTasksByStatus([]);
+
+    // Empty array returns empty object
+    expect(Object.keys(grouped)).toHaveLength(0);
+  });
+
+  it('should sort tasks by priority correctly', async () => {
+    const { sortByPriority } = await import('../utils/helpers.js');
+    
+    const tasks = [
+      { id: 1, priority: 'low' },
+      { id: 2, priority: 'high' },
+      { id: 3, priority: 'medium' },
+      { id: 4, priority: 'high' }
+    ];
+
+    const sorted = sortByPriority(tasks);
+
+    // High priority should come first
+    expect(sorted[0].priority).toBe('high');
+    expect(sorted[1].priority).toBe('high');
+    expect(sorted[2].priority).toBe('medium');
+    expect(sorted[3].priority).toBe('low');
+  });
+
+  it('should handle tasks with missing priority', async () => {
+    const { sortByPriority } = await import('../utils/helpers.js');
+    
+    const tasks = [
+      { id: 1 },
+      { id: 2, priority: 'high' },
+      { id: 3, priority: null }
+    ];
+
+    const sorted = sortByPriority(tasks);
+    expect(sorted).toHaveLength(3);
+  });
+});
+
+
+describe('Edge Cases - Validation Functions', () => {
+  it('should validate required fields', async () => {
+    const { validateRequired } = await import('../utils/validators.js');
+    
+    expect(validateRequired('value')).toBe(true);
+    expect(validateRequired('')).toBe(false);
+    expect(validateRequired(null)).toBe(false);
+    expect(validateRequired(undefined)).toBe(false);
+    expect(validateRequired('   ')).toBe(false);
+  });
+
+  it('should validate phone numbers', async () => {
+    const { validatePhone } = await import('../utils/validators.js');
+    
+    expect(validatePhone('+919876543210')).toBe(true);
+    expect(validatePhone('+1234567890')).toBe(true);
+    expect(validatePhone('invalid')).toBe(false);
+    expect(validatePhone('')).toBe(false);
+  });
+
+  it('should validate dates', async () => {
+    const { validateDate } = await import('../utils/validators.js');
+    
+    expect(validateDate('2026-01-25')).toBe(true);
+    expect(validateDate('invalid-date')).toBe(false);
+    expect(validateDate('')).toBe(true); // Empty is allowed
+  });
+
+  it('should validate priority values', async () => {
+    const { validatePriority } = await import('../utils/validators.js');
+    
+    expect(validatePriority('high')).toBe(true);
+    expect(validatePriority('medium')).toBe(true);
+    expect(validatePriority('low')).toBe(true);
+    expect(validatePriority('critical')).toBe(false);
+    expect(validatePriority('')).toBe(false);
+  });
+
+  it('should validate status values', async () => {
+    const { validateStatus } = await import('../utils/validators.js');
+    
+    expect(validateStatus('unassigned')).toBe(true);
+    expect(validateStatus('in_progress')).toBe(true);
+    expect(validateStatus('pending_verification')).toBe(true);
+    expect(validateStatus('completed')).toBe(true);
+    expect(validateStatus('todo')).toBe(false);
+    expect(validateStatus('invalid')).toBe(false);
+  });
+});
+

@@ -3,6 +3,15 @@ import { formatDate } from '../../utils/helpers'
 import { STATUS } from '../../utils/constants'
 
 const ProjectStats = ({ project, tasks }) => {
+  // Calculate unique team members with assigned tasks
+  const uniqueAssignedMembers = new Set(
+    tasks
+      .filter(t => t.assignedTo) // Only tasks with assigned members
+      .map(t => t.assignedTo)
+  )
+  const activeTeamMembers = uniqueAssignedMembers.size
+  const totalTeamMembers = project.assignedEmployees?.length || 0
+
   const stats = [
     {
       label: 'Date Range',
@@ -12,7 +21,7 @@ const ProjectStats = ({ project, tasks }) => {
     },
     {
       label: 'Team Members',
-      value: project.assignedEmployees?.length || 0,
+      value: `${activeTeamMembers}/${totalTeamMembers}`,
       icon: Users,
       color: 'text-purple-600'
     },

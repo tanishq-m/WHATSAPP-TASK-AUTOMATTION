@@ -1,13 +1,15 @@
-import { Calendar, MessageCircle, Check, Clock } from 'lucide-react'
+import { Calendar, MessageCircle, Check, Clock, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { formatDate, isOverdue } from '../../utils/helpers'
 import { useApp } from '../../context/useApp'
 import TaskPriorityBadge from './TaskPriorityBadge'
 import EmployeeAvatar from '../employees/EmployeeAvatar'
+import ConfirmDialog from '../common/ConfirmDialog'
 
 const TaskCard = ({ task, onClick, isDragging = false }) => {
-  const { getEmployeeById, getProjectById, sendTaskToWhatsApp } = useApp()
+  const { getEmployeeById, getProjectById, sendTaskToWhatsApp, deleteTask } = useApp()
   const [sending, setSending] = useState(false)
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   
   const employee = getEmployeeById(task.assignedTo)
   const project = getProjectById(task.projectId)
@@ -22,56 +24,85 @@ const TaskCard = ({ task, onClick, isDragging = false }) => {
 
     setSending(true)
     try {
-      // Use taskId for API call
-      await sendTaskToWhatsApp(task.taskId)
+      // Use consistent ID pattern (toCamelCase ensures id === taskId)
+      const taskId = task.id || task.taskId
+      await sendTaskToWhatsApp(taskId)
     } finally {
       setSending(false)
     }
   }
 
+  const handleDelete = async () => {
+    try {
+      // Use consistent ID pattern (toCamelCase ensures id === taskId)
+      const taskId = task.id || task.taskId
+      await deleteTask(taskId)
+      // Don't call setShowDeleteConfirm here - ConfirmDialog handles closing
+    } catch (error) {
+      console.error('Failed to delete task:', error)
+      // Only close dialog on error so user knows something went wrong
+      setShowDeleteConfirm(false)
+    }
+  }
+
   return (
-    <div
-      onClick={onClick}
-      className={`card p-3 cursor-pointer hover:shadow-md transition-smooth ${isDragging ? 'opacity-50' : ''}`}
-      style={{ borderLeftWidth: '3px', borderLeftColor: project?.color || '#3B82F6' }}
-    >
-      {/* Header: Priority Badge + WhatsApp Status */}
-      <div className="flex items-center justify-between mb-2">
+    <>
+      <div
+        onClick={onClick}
+        className={`card p-4 cursor-pointer hover:shadow-md transition-smooth ${isDragging ? 'opacity-50' : ''}`}
+        style={{ borderLeftWidth: '3px', borderLeftColor: project?.color || '#3B82F6' }}
+      >
+      {/* Header: Priority Badge + Delete Button + WhatsApp Status */}
+      <div className="flex items-center justify-between mb-3">
         <TaskPriorityBadge priority={task.priority} />
         
-        {/* WhatsApp Status Indicators */}
-        {task.whatsappSent && (
-          <div className="flex items-center gap-1">
-            {task.whatsappResponse === 'completed' && (
-              <span className="text-xs text-green-600 flex items-center gap-1">
-                <Check className="w-3 h-3" />
-                Done
-              </span>
-            )}
-            {task.whatsappResponse === 'not_completed' && (
-              <span className="text-xs text-yellow-600 flex items-center gap-1">
-                <Clock className="w-3 h-3" />
-                Pending
-              </span>
-            )}
-            {!task.whatsappResponse && (
-              <span className="text-xs text-blue-600 flex items-center gap-1">
-                <MessageCircle className="w-3 h-3" />
-                Sent
-              </span>
-            )}
-          </div>
-        )}
+        <div className="flex items-center gap-2">
+          {/* Delete Button */}
+          <button
+            onClick={(e) => { 
+              e.stopPropagation()
+              setShowDeleteConfirm(true)
+            }}
+            className="p-1 hover:bg-red-50 rounded transition-smooth"
+            title="Delete task"
+          >
+            <Trash2 className="w-3.5 h-3.5 text-gray-400 hover:text-red-500" />
+          </button>
+
+          {/* WhatsApp Status Indicators */}
+          {task.whatsappSent && (
+            <div className="flex items-center gap-1">
+              {task.whatsappResponse === 'completed' && (
+                <span className="text-xs text-green-600 flex items-center gap-1">
+                  <Check className="w-3 h-3" />
+                  Done
+                </span>
+              )}
+              {task.whatsappResponse === 'not_completed' && (
+                <span className="text-xs text-yellow-600 flex items-center gap-1">
+                  <Clock className="w-3 h-3" />
+                  Pending
+                </span>
+              )}
+              {!task.whatsappResponse && (
+                <span className="text-xs text-blue-600 flex items-center gap-1">
+                  <MessageCircle className="w-3 h-3" />
+                  Sent
+                </span>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Task Title */}
-      <h4 className="font-medium text-gray-900 mb-2 line-clamp-2">
+      <h4 className="font-medium text-gray-900 mb-3 line-clamp-2 text-base">
         {task.title}
       </h4>
 
       {/* Assigned Employee */}
       {employee && (
-        <div className="mb-2">
+        <div className="mb-3">
           <EmployeeAvatar employee={employee} size="xs" showName />
         </div>
       )}
@@ -102,7 +133,19 @@ const TaskCard = ({ task, onClick, isDragging = false }) => {
           </button>
         )}
       </div>
-    </div>
+      </div>
+
+      {/* Delete Confirmation Dialog - outside card to prevent click propagation issues */}
+      <ConfirmDialog
+        isOpen={showDeleteConfirm}
+        onClose={() => setShowDeleteConfirm(false)}
+        onConfirm={handleDelete}
+        title="Delete Task"
+        message="Are you sure you want to delete this task? This action cannot be undone."
+        confirmText="Delete"
+        variant="danger"
+      />
+    </>
   )
 }
 

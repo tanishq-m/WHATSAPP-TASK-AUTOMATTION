@@ -101,15 +101,15 @@ const ProjectDetail = () => {
       </div>
 
       {/* Kanban Board */}
-      <div className="bg-white rounded-lg border border-gray-200 p-4 md:p-6">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">
+      <div className="bg-white rounded-lg border border-gray-200 p-3 sm:p-4 md:p-6 overflow-hidden">
+        <h2 className="text-base sm:text-lg font-semibold text-gray-900 mb-3 sm:mb-4">
           Task Board
         </h2>
         {tasks.length > 0 ? (
           <KanbanBoard tasks={tasks} projectId={projectId} />
         ) : (
-          <div className="flex flex-col items-center justify-center py-12">
-            <p className="text-gray-500 mb-4">No tasks yet. Create your first task!</p>
+          <div className="flex flex-col items-center justify-center py-8 sm:py-12">
+            <p className="text-gray-500 mb-4 text-sm sm:text-base text-center px-4">No tasks yet. Create your first task!</p>
             <Button
               onClick={() => setShowCreateTask(true)}
               variant="secondary"
