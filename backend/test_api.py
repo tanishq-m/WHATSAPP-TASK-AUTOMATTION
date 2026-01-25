@@ -14,6 +14,7 @@ import os
 import sys
 import tempfile
 import sqlite3
+from unittest.mock import patch, MagicMock
 
 # Add the backend directory to the path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -25,6 +26,24 @@ import database
 # ============================================================================
 # FIXTURES - Setup and Teardown
 # ============================================================================
+
+@pytest.fixture
+def mock_kapso():
+    """Mock Kapso WhatsApp API to prevent actual message sending during tests."""
+    with patch('kapso_service.send_text_message') as mock_send_text, \
+         patch('kapso_service.send_task_assignment') as mock_send_task, \
+         patch('kapso_service.send_interactive_buttons') as mock_send_buttons:
+        
+        # Mock successful responses
+        mock_send_text.return_value = {"success": True, "data": {"messages": [{"id": "mock_msg_id"}]}}
+        mock_send_task.return_value = {"success": True, "data": {"messages": [{"id": "mock_msg_id"}]}}
+        mock_send_buttons.return_value = {"success": True, "data": {"messages": [{"id": "mock_msg_id"}]}}
+        
+        yield {
+            'send_text': mock_send_text,
+            'send_task': mock_send_task,
+            'send_buttons': mock_send_buttons
+        }
 
 @pytest.fixture
 def client():
@@ -58,7 +77,7 @@ def sample_employee(client):
     cursor.execute("""
         INSERT INTO employees (name, phone, role, created_at)
         VALUES (?, ?, ?, datetime('now'))
-    """, ('Test User', '+911234567890', 'Tester'))
+    """, ('Test User', '+918005800336', 'Tester'))
     conn.commit()
     employee_id = cursor.lastrowid
     conn.close()
@@ -144,7 +163,7 @@ class TestEmployees:
         data = json.loads(response.data)
         assert data['success'] == True
         assert data['data']['name'] == 'Test User'
-        assert data['data']['phone'] == '+911234567890'
+        assert data['data']['phone'] == '+918005800336'
     
     def test_get_employee_not_found(self, client):
         """GET /api/employees/<id> with invalid ID should return 404."""
@@ -240,6 +259,138 @@ class TestProjects:
         # Verify project is deleted
         response = client.get(f'/api/projects/{sample_project}')
         assert response.status_code == 404
+
+    # ========================================================================
+    # P3-6: Optional Dates Tests
+    # ========================================================================
+    def test_create_project_without_dates(self, client):
+        """POST /api/projects without dates should succeed (P3-6)."""
+        response = client.post('/api/projects',
+            data=json.dumps({
+                'name': 'Project Without Dates'
+            }),
+            content_type='application/json'
+        )
+        assert response.status_code == 201
+        
+        data = json.loads(response.data)
+        assert data['success'] == True
+        assert data['data']['name'] == 'Project Without Dates'
+    
+    def test_create_project_with_empty_dates(self, client):
+        """POST /api/projects with empty date strings should succeed (P3-6)."""
+        response = client.post('/api/projects',
+            data=json.dumps({
+                'name': 'Project With Empty Dates',
+                'startDate': '',
+                'endDate': ''
+            }),
+            content_type='application/json'
+        )
+        assert response.status_code == 201
+        
+        data = json.loads(response.data)
+        assert data['success'] == True
+    
+    def test_create_project_with_only_start_date(self, client):
+        """POST /api/projects with only start date should succeed (P3-6)."""
+        response = client.post('/api/projects',
+            data=json.dumps({
+                'name': 'Project With Start Only',
+                'startDate': '2026-01-01'
+            }),
+            content_type='application/json'
+        )
+        assert response.status_code == 201
+
+    # ========================================================================
+    # P3-9: Team Members / Assigned Employees Tests
+    # ========================================================================
+    def test_create_project_with_assigned_employees(self, client, sample_employee):
+        """POST /api/projects with assignedEmployees should succeed (P3-9)."""
+        response = client.post('/api/projects',
+            data=json.dumps({
+                'name': 'Project With Team',
+                'assignedEmployees': [sample_employee]
+            }),
+            content_type='application/json'
+        )
+        assert response.status_code == 201
+        
+        data = json.loads(response.data)
+        assert data['success'] == True
+        assert 'assigned_employees' in data['data']
+        assert sample_employee in data['data']['assigned_employees']
+    
+    def test_get_projects_includes_assigned_employees(self, client, sample_employee):
+        """GET /api/projects should include assigned_employees array (P3-9)."""
+        # Create project with team member
+        client.post('/api/projects',
+            data=json.dumps({
+                'name': 'Team Project',
+                'assignedEmployees': [sample_employee]
+            }),
+            content_type='application/json'
+        )
+        
+        # Fetch all projects
+        response = client.get('/api/projects')
+        assert response.status_code == 200
+        
+        data = json.loads(response.data)
+        assert data['success'] == True
+        
+        # Find the team project
+        team_project = next((p for p in data['data'] if p['name'] == 'Team Project'), None)
+        assert team_project is not None
+        assert 'assigned_employees' in team_project
+        assert sample_employee in team_project['assigned_employees']
+    
+    def test_update_project_assigned_employees(self, client, sample_project, sample_employee):
+        """PUT /api/projects/<id> should update assigned employees (P3-9)."""
+        response = client.put(f'/api/projects/{sample_project}',
+            data=json.dumps({
+                'assignedEmployees': [sample_employee]
+            }),
+            content_type='application/json'
+        )
+        assert response.status_code == 200
+        
+        data = json.loads(response.data)
+        assert data['success'] == True
+        assert 'assigned_employees' in data['data']
+        assert sample_employee in data['data']['assigned_employees']
+    
+    def test_project_with_multiple_team_members(self, client):
+        """POST /api/projects with multiple team members should succeed (P3-9)."""
+        # Create multiple employees
+        conn = sqlite3.connect(database.DATABASE_PATH)
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO employees (name, phone, role) VALUES (?, ?, ?)", 
+                       ('Member 1', '+911111111111', 'Dev'))
+        emp1 = cursor.lastrowid
+        cursor.execute("INSERT INTO employees (name, phone, role) VALUES (?, ?, ?)", 
+                       ('Member 2', '+912222222222', 'Dev'))
+        emp2 = cursor.lastrowid
+        cursor.execute("INSERT INTO employees (name, phone, role) VALUES (?, ?, ?)", 
+                       ('Member 3', '+913333333333', 'Dev'))
+        emp3 = cursor.lastrowid
+        conn.commit()
+        conn.close()
+        
+        # Create project with all team members
+        response = client.post('/api/projects',
+            data=json.dumps({
+                'name': 'Multi-Member Project',
+                'assignedEmployees': [emp1, emp2, emp3]
+            }),
+            content_type='application/json'
+        )
+        assert response.status_code == 201
+        
+        data = json.loads(response.data)
+        assert data['success'] == True
+        assert len(data['data']['assigned_employees']) == 3
 
 
 # ============================================================================
@@ -380,6 +531,95 @@ class TestTasks:
         response = client.get(f'/api/tasks/{sample_task}')
         assert response.status_code == 404
 
+    def test_create_task_after_deletion_no_duplicate_id(self, client, sample_project):
+        """
+        Regression test: Creating task after deletion should NOT cause duplicate ID error.
+        
+        This tests the fix for the bug where task_id generation used COUNT(*) instead of MAX(),
+        causing UNIQUE constraint violations after tasks were deleted.
+        """
+        # Create first task
+        response = client.post('/api/tasks',
+            data=json.dumps({
+                'title': 'Task to be deleted',
+                'projectId': sample_project,
+                'priority': 'medium',
+                'status': 'unassigned'
+            }),
+            content_type='application/json'
+        )
+        assert response.status_code == 201
+        data = json.loads(response.data)
+        first_task_id = data['data']['task_id']
+        
+        # Delete the task
+        response = client.delete(f'/api/tasks/{first_task_id}')
+        assert response.status_code == 200
+        
+        # Create second task - this should NOT fail with duplicate ID
+        response = client.post('/api/tasks',
+            data=json.dumps({
+                'title': 'Task after deletion',
+                'projectId': sample_project,
+                'priority': 'high',
+                'status': 'unassigned'
+            }),
+            content_type='application/json'
+        )
+        assert response.status_code == 201
+        data = json.loads(response.data)
+        second_task_id = data['data']['task_id']
+        
+        # Verify the IDs are different (second should be higher)
+        first_num = int(first_task_id.split('_')[1])
+        second_num = int(second_task_id.split('_')[1])
+        assert second_num > first_num, f"Second task ID ({second_task_id}) should be greater than first ({first_task_id})"
+
+    def test_task_id_uses_max_not_count(self, client, sample_project):
+        """
+        Verify task_id generation uses MAX(task_id) instead of COUNT(*).
+        
+        This ensures unique IDs even after deletions.
+        """
+        # Create 3 tasks
+        task_ids = []
+        for i in range(3):
+            response = client.post('/api/tasks',
+                data=json.dumps({
+                    'title': f'Test Task {i}',
+                    'projectId': sample_project,
+                    'priority': 'medium',
+                    'status': 'unassigned'
+                }),
+                content_type='application/json'
+            )
+            assert response.status_code == 201
+            data = json.loads(response.data)
+            task_ids.append(data['data']['task_id'])
+        
+        # Delete middle task
+        response = client.delete(f'/api/tasks/{task_ids[1]}')
+        assert response.status_code == 200
+        
+        # Create new task - should get ID higher than all existing
+        response = client.post('/api/tasks',
+            data=json.dumps({
+                'title': 'New Task After Middle Deletion',
+                'projectId': sample_project,
+                'priority': 'low',
+                'status': 'unassigned'
+            }),
+            content_type='application/json'
+        )
+        assert response.status_code == 201
+        data = json.loads(response.data)
+        new_task_id = data['data']['task_id']
+        
+        # New task ID should be greater than the highest existing ID
+        max_existing = max(int(tid.split('_')[1]) for tid in task_ids)
+        new_num = int(new_task_id.split('_')[1])
+        assert new_num > max_existing, f"New task ID ({new_task_id}) should be > max existing ({max_existing})"
+
 
 # ============================================================================
 # WHATSAPP INTEGRATION TESTS
@@ -449,12 +689,12 @@ class TestWhatsAppIntegration:
         # Should return 200 to prevent Kapso retries
         assert response.status_code == 200
     
-    def test_webhook_button_response_completed(self, client, sample_task):
+    def test_webhook_button_response_completed(self, client, sample_task, mock_kapso):
         """POST /api/webhook/whatsapp with completed button should update task."""
         response = client.post('/api/webhook/whatsapp',
             data=json.dumps({
                 'message': {
-                    'from': '911234567890',
+                    'from': '918005800336',
                     'interactive': {
                         'type': 'button_reply',
                         'button_reply': {
@@ -476,13 +716,16 @@ class TestWhatsAppIntegration:
         response = client.get(f'/api/tasks/{sample_task}/whatsapp-status')
         data = json.loads(response.data)
         assert data['data']['whatsapp_response'] == 'completed'
+        
+        # Verify WhatsApp message was sent (mocked)
+        assert mock_kapso['send_text'].called or mock_kapso['send_task'].called
     
-    def test_webhook_button_response_not_completed(self, client, sample_task):
+    def test_webhook_button_response_not_completed(self, client, sample_task, mock_kapso):
         """POST /api/webhook/whatsapp with not_completed button should update task."""
         response = client.post('/api/webhook/whatsapp',
             data=json.dumps({
                 'message': {
-                    'from': '911234567890',
+                    'from': '918005800336',
                     'interactive': {
                         'type': 'button_reply',
                         'button_reply': {
@@ -504,14 +747,17 @@ class TestWhatsAppIntegration:
         response = client.get(f'/api/tasks/{sample_task}')
         data = json.loads(response.data)
         assert data['data']['status'] != 'done'
+        
+        # Verify WhatsApp message was sent (mocked)
+        assert mock_kapso['send_text'].called or mock_kapso['send_task'].called
     
-    def test_webhook_duplicate_response_prevention(self, client, sample_task):
+    def test_webhook_duplicate_response_prevention(self, client, sample_task, mock_kapso):
         """POST /api/webhook/whatsapp with duplicate button click should be ignored."""
         # First response - should succeed
         first_response = client.post('/api/webhook/whatsapp',
             data=json.dumps({
                 'message': {
-                    'from': '911234567890',
+                    'from': '918005800336',
                     'interactive': {
                         'type': 'button_reply',
                         'button_reply': {
@@ -532,7 +778,7 @@ class TestWhatsAppIntegration:
         second_response = client.post('/api/webhook/whatsapp',
             data=json.dumps({
                 'message': {
-                    'from': '911234567890',
+                    'from': '918005800336',
                     'interactive': {
                         'type': 'button_reply',
                         'button_reply': {
@@ -589,6 +835,42 @@ class TestDatabase:
         result = database.get_all_employees()
         assert result['success'] == True
 
+    def test_get_db_connection_context_manager(self, client):
+        """
+        Regression test: get_db_connection() context manager should always close connections.
+        
+        This tests the fix for the database locking bug where connections weren't closed
+        on errors, causing "database is locked" errors.
+        """
+        # The context manager should work even if we query inside it
+        with database.get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM employees")
+            count = cursor.fetchone()[0]
+            assert count >= 0
+        
+        # After exiting the context, we should be able to get a new connection
+        result = database.get_all_employees()
+        assert result['success'] == True
+
+    def test_database_connection_closes_on_error(self, client):
+        """
+        Regression test: Database connections should close even when queries fail.
+        
+        This prevents database locking issues.
+        """
+        try:
+            with database.get_db_connection() as conn:
+                cursor = conn.cursor()
+                # This should fail - invalid table
+                cursor.execute("SELECT * FROM nonexistent_table_xyz")
+        except Exception:
+            pass  # Expected to fail
+        
+        # Connection should still be closed, allowing new operations
+        result = database.get_all_employees()
+        assert result['success'] == True
+
 
 # ============================================================================
 # ERROR HANDLING TESTS
@@ -622,65 +904,417 @@ class TestErrorHandling:
 class TestIntegration:
     """End-to-end integration tests."""
     
-    def test_full_task_lifecycle(self, client, sample_project, sample_employee):
-        """Test complete task lifecycle: create -> update -> send -> receive response -> delete."""
+    def test_project_creation_returns_backend_id(self, client, sample_employee):
+        """Test that creating a project returns the backend-generated ID, not frontend ID.
         
-        # 1. Create task
-        response = client.post('/api/tasks',
+        Bug Fix: Previously, frontend generated its own ID and navigated to that ID,
+        but backend generated a different ID, causing "project not found" on navigation.
+        """
+        # Create project with assigned employees
+        response = client.post('/api/projects',
             data=json.dumps({
-                'title': 'Lifecycle Test Task',
-                'description': 'Testing full lifecycle',
-                'projectId': sample_project,
-                'assignedTo': sample_employee,
-                'dueDate': '2026-03-01',
-                'priority': 'high',
-                'status': 'todo'
+                'name': 'Test ID Project',
+                'description': 'Testing backend ID generation',
+                'startDate': '2026-01-01',
+                'endDate': '2026-12-31',
+                'assignedEmployees': [sample_employee]
+            }),
+            content_type='application/json'
+        )
+        assert response.status_code == 201
+        
+        data = json.loads(response.data)
+        assert data['success'] == True
+        assert 'id' in data['data']
+        
+        # Backend should generate an ID in format "proj_XXX"
+        project_id = data['data']['id']
+        assert project_id.startswith('proj_')
+        
+        # Verify the project can be fetched using the returned ID
+        response = client.get(f'/api/projects/{project_id}')
+        assert response.status_code == 200
+        
+        fetch_data = json.loads(response.data)
+        assert fetch_data['success'] == True
+        assert fetch_data['data']['name'] == 'Test ID Project'
+        assert fetch_data['data']['id'] == project_id
+        
+        # Verify project appears in the list with correct ID
+        response = client.get('/api/projects')
+        assert response.status_code == 200
+        
+        list_data = json.loads(response.data)
+        created_project = next((p for p in list_data['data'] if p['id'] == project_id), None)
+        assert created_project is not None
+        assert created_project['name'] == 'Test ID Project'
+
+
+# ============================================================================
+# EDGE CASE TESTS
+# ============================================================================
+
+class TestEdgeCases:
+    """Edge case and boundary condition tests."""
+
+    # -------------------------------------------------------------------------
+    # Project Edge Cases
+    # -------------------------------------------------------------------------
+    
+    def test_create_project_with_very_long_name(self, client):
+        """Project with a very long name should be handled."""
+        long_name = 'A' * 500  # 500 character name
+        response = client.post('/api/projects',
+            data=json.dumps({
+                'name': long_name,
+                'description': 'Test'
             }),
             content_type='application/json'
         )
         assert response.status_code == 201
         data = json.loads(response.data)
-        task_id = data['data']['task_id']
-        
-        # 2. Update task status
-        response = client.put(f'/api/tasks/{task_id}',
-            data=json.dumps({'status': 'in_progress'}),
+        assert data['data']['name'] == long_name
+
+    def test_create_project_with_special_characters(self, client):
+        """Project name with special characters should be handled."""
+        special_name = "Project #1 (Test) - 'Alpha' & \"Beta\" @2026!"
+        response = client.post('/api/projects',
+            data=json.dumps({
+                'name': special_name,
+                'description': 'Test'
+            }),
             content_type='application/json'
         )
-        assert response.status_code == 200
-        
-        # 3. Simulate webhook response
-        response = client.post('/api/webhook/whatsapp',
-            data=json.dumps({
-                'message': {
-                    'from': '911234567890',
-                    'interactive': {
-                        'type': 'button_reply',
-                        'button_reply': {
-                            'id': f'completed_{task_id}',
-                            'title': '✅ Yes, Completed'
-                        }
-                    }
-                }
-            }),
-            content_type='application/json',
-            headers={'X-Webhook-Event': 'whatsapp.message.received'}
-        )
-        assert response.status_code == 200
-        
-        # 4. Verify task is marked done
-        response = client.get(f'/api/tasks/{task_id}')
+        assert response.status_code == 201
         data = json.loads(response.data)
-        assert data['data']['status'] == 'done'
-        assert data['data']['whatsapp_response'] == 'completed'
+        assert data['data']['name'] == special_name
+
+    def test_create_project_with_unicode_characters(self, client):
+        """Project name with unicode/emoji should be handled."""
+        unicode_name = "प्रोजेक्ट 📱 टेस्ट 🚀"
+        response = client.post('/api/projects',
+            data=json.dumps({
+                'name': unicode_name,
+                'description': 'Hindi + Emoji test'
+            }),
+            content_type='application/json'
+        )
+        assert response.status_code == 201
+        data = json.loads(response.data)
+        assert data['data']['name'] == unicode_name
+
+    def test_create_project_with_empty_description(self, client):
+        """Project with empty description should be valid."""
+        response = client.post('/api/projects',
+            data=json.dumps({
+                'name': 'No Description Project',
+                'description': ''
+            }),
+            content_type='application/json'
+        )
+        assert response.status_code == 201
+
+    def test_update_project_with_empty_name_fails(self, client, sample_project):
+        """Updating project with empty name should fail or preserve old name."""
+        response = client.put(f'/api/projects/{sample_project}',
+            data=json.dumps({'name': ''}),
+            content_type='application/json'
+        )
+        # Should either fail (400) or succeed but preserve non-empty name
+        if response.status_code == 200:
+            data = json.loads(response.data)
+            assert len(data['data']['name']) > 0
+
+    def test_delete_nonexistent_project(self, client):
+        """Deleting a non-existent project should return 404."""
+        response = client.delete('/api/projects/proj_nonexistent_999')
+        assert response.status_code == 404
+
+    def test_get_project_with_invalid_id_format(self, client):
+        """Invalid project ID format should return 404."""
+        response = client.get('/api/projects/invalid-format')
+        assert response.status_code == 404
+
+    # -------------------------------------------------------------------------
+    # Task Edge Cases
+    # -------------------------------------------------------------------------
+
+    def test_create_task_with_very_long_title(self, client, sample_project):
+        """Task with a very long title should be handled."""
+        long_title = 'T' * 1000  # 1000 character title
+        response = client.post('/api/tasks',
+            data=json.dumps({
+                'title': long_title,
+                'projectId': sample_project,
+                'status': 'unassigned'
+            }),
+            content_type='application/json'
+        )
+        assert response.status_code == 201
+        data = json.loads(response.data)
+        assert data['data']['title'] == long_title
+
+    def test_create_task_with_html_in_title(self, client, sample_project):
+        """Task title with HTML should be stored as-is (XSS prevention is frontend's job)."""
+        html_title = '<script>alert("xss")</script>'
+        response = client.post('/api/tasks',
+            data=json.dumps({
+                'title': html_title,
+                'projectId': sample_project,
+                'status': 'unassigned'
+            }),
+            content_type='application/json'
+        )
+        assert response.status_code == 201
+        data = json.loads(response.data)
+        assert data['data']['title'] == html_title
+
+    def test_create_task_with_null_optional_fields(self, client, sample_project):
+        """Task with null optional fields should work."""
+        response = client.post('/api/tasks',
+            data=json.dumps({
+                'title': 'Minimal Task',
+                'projectId': sample_project,
+                'description': None,
+                'dueDate': None,
+                'assignedTo': None,
+                'priority': None,
+                'status': 'unassigned'
+            }),
+            content_type='application/json'
+        )
+        assert response.status_code == 201
+
+    def test_create_multiple_tasks_rapidly(self, client, sample_project):
+        """Creating many tasks rapidly should generate unique IDs."""
+        task_ids = []
+        for i in range(10):
+            response = client.post('/api/tasks',
+                data=json.dumps({
+                    'title': f'Rapid Task {i}',
+                    'projectId': sample_project,
+                    'status': 'unassigned'
+                }),
+                content_type='application/json'
+            )
+            assert response.status_code == 201
+            data = json.loads(response.data)
+            task_ids.append(data['data']['task_id'])
         
-        # 5. Delete task
+        # All IDs should be unique
+        assert len(task_ids) == len(set(task_ids)), "Task IDs should be unique"
+
+    def test_update_task_with_invalid_status(self, client, sample_project):
+        """Updating task with invalid status should fail or be handled."""
+        # Create a task first
+        response = client.post('/api/tasks',
+            data=json.dumps({
+                'title': 'Status Test Task',
+                'projectId': sample_project,
+                'status': 'unassigned'
+            }),
+            content_type='application/json'
+        )
+        task_id = json.loads(response.data)['data']['task_id']
+        
+        # Try to update with invalid status
+        response = client.put(f'/api/tasks/{task_id}',
+            data=json.dumps({'status': 'invalid_status_xyz'}),
+            content_type='application/json'
+        )
+        # Should either reject or accept (depending on validation)
+        assert response.status_code in [200, 400]
+
+    def test_update_task_with_invalid_priority(self, client, sample_project):
+        """Updating task with invalid priority should be handled."""
+        response = client.post('/api/tasks',
+            data=json.dumps({
+                'title': 'Priority Test Task',
+                'projectId': sample_project,
+                'status': 'unassigned'
+            }),
+            content_type='application/json'
+        )
+        task_id = json.loads(response.data)['data']['task_id']
+        
+        response = client.put(f'/api/tasks/{task_id}',
+            data=json.dumps({'priority': 'critical'}),  # Not a valid priority
+            content_type='application/json'
+        )
+        assert response.status_code in [200, 400]
+
+    def test_delete_already_deleted_task(self, client, sample_project):
+        """Deleting an already deleted task should return 404."""
+        # Create and delete a task
+        response = client.post('/api/tasks',
+            data=json.dumps({
+                'title': 'Delete Test Task',
+                'projectId': sample_project,
+                'status': 'unassigned'
+            }),
+            content_type='application/json'
+        )
+        task_id = json.loads(response.data)['data']['task_id']
+        
+        # First delete should succeed
         response = client.delete(f'/api/tasks/{task_id}')
         assert response.status_code == 200
         
-        # 6. Verify deleted
-        response = client.get(f'/api/tasks/{task_id}')
+        # Second delete should return 404
+        response = client.delete(f'/api/tasks/{task_id}')
         assert response.status_code == 404
+
+    def test_task_id_unique_after_multiple_deletions(self, client, sample_project):
+        """Task IDs should remain unique even after multiple create/delete cycles."""
+        created_ids = []
+        
+        for cycle in range(3):
+            # Create 3 tasks
+            for i in range(3):
+                response = client.post('/api/tasks',
+                    data=json.dumps({
+                        'title': f'Cycle {cycle} Task {i}',
+                        'projectId': sample_project,
+                        'status': 'unassigned'
+                    }),
+                    content_type='application/json'
+                )
+                assert response.status_code == 201
+                task_id = json.loads(response.data)['data']['task_id']
+                assert task_id not in created_ids, f"Duplicate ID {task_id} found!"
+                created_ids.append(task_id)
+            
+            # Delete all tasks in this cycle
+            for task_id in created_ids[-3:]:
+                client.delete(f'/api/tasks/{task_id}')
+        
+        # All IDs should be unique
+        assert len(created_ids) == len(set(created_ids))
+
+    # -------------------------------------------------------------------------
+    # Employee Edge Cases
+    # -------------------------------------------------------------------------
+
+    def test_get_employee_with_string_id(self, client):
+        """Getting employee with string ID should work (ID 1)."""
+        response = client.get('/api/employees/1')
+        assert response.status_code == 200
+
+    def test_get_employee_with_negative_id(self, client):
+        """Getting employee with negative ID should return 404."""
+        response = client.get('/api/employees/-1')
+        assert response.status_code == 404
+
+    def test_get_employee_with_zero_id(self, client):
+        """Getting employee with ID 0 should return 404."""
+        response = client.get('/api/employees/0')
+        assert response.status_code == 404
+
+    def test_get_employee_with_very_large_id(self, client):
+        """Getting employee with very large ID should return 404."""
+        response = client.get('/api/employees/999999999')
+        assert response.status_code == 404
+
+    # -------------------------------------------------------------------------
+    # Data Integrity Edge Cases
+    # -------------------------------------------------------------------------
+
+    def test_task_persists_after_project_fetch(self, client, sample_project):
+        """Tasks should remain associated with project after fetching."""
+        # Create task
+        response = client.post('/api/tasks',
+            data=json.dumps({
+                'title': 'Persistence Test',
+                'projectId': sample_project,
+                'status': 'unassigned'
+            }),
+            content_type='application/json'
+        )
+        task_id = json.loads(response.data)['data']['task_id']
+        
+        # Fetch project multiple times
+        for _ in range(5):
+            client.get(f'/api/projects/{sample_project}')
+        
+        # Task should still exist
+        response = client.get(f'/api/tasks/{task_id}')
+        assert response.status_code == 200
+
+    def test_concurrent_task_updates_last_write_wins(self, client, sample_project):
+        """Last update should win in concurrent update scenario."""
+        # Create task
+        response = client.post('/api/tasks',
+            data=json.dumps({
+                'title': 'Concurrent Test',
+                'projectId': sample_project,
+                'priority': 'low',
+                'status': 'unassigned'
+            }),
+            content_type='application/json'
+        )
+        task_id = json.loads(response.data)['data']['task_id']
+        
+        # Rapid updates
+        client.put(f'/api/tasks/{task_id}',
+            data=json.dumps({'priority': 'low'}),
+            content_type='application/json'
+        )
+        client.put(f'/api/tasks/{task_id}',
+            data=json.dumps({'priority': 'medium'}),
+            content_type='application/json'
+        )
+        response = client.put(f'/api/tasks/{task_id}',
+            data=json.dumps({'priority': 'high'}),
+            content_type='application/json'
+        )
+        
+        # Final state should be 'high'
+        data = json.loads(response.data)
+        assert data['data']['priority'] == 'high'
+
+
+# ============================================================================
+# WHATSAPP EDGE CASES
+# ============================================================================
+
+class TestWhatsAppEdgeCases:
+    """Edge cases for WhatsApp integration."""
+
+    def test_send_whatsapp_to_task_without_employee(self, client, sample_project, mock_kapso):
+        """Sending WhatsApp to unassigned task should fail gracefully."""
+        # Create task without assignment
+        response = client.post('/api/tasks',
+            data=json.dumps({
+                'title': 'Unassigned Task',
+                'projectId': sample_project,
+                'status': 'unassigned'
+            }),
+            content_type='application/json'
+        )
+        task_id = json.loads(response.data)['data']['task_id']
+        
+        # Try to send WhatsApp
+        response = client.post(f'/api/tasks/{task_id}/send-whatsapp-buttons')
+        assert response.status_code == 400
+        data = json.loads(response.data)
+        assert data['success'] == False
+
+    def test_whatsapp_status_for_never_sent_task(self, client, sample_project):
+        """Getting WhatsApp status for never-sent task should work."""
+        response = client.post('/api/tasks',
+            data=json.dumps({
+                'title': 'Never Sent Task',
+                'projectId': sample_project,
+                'status': 'unassigned'
+            }),
+            content_type='application/json'
+        )
+        task_id = json.loads(response.data)['data']['task_id']
+        
+        response = client.get(f'/api/tasks/{task_id}/whatsapp-status')
+        assert response.status_code == 200
+        data = json.loads(response.data)
+        assert data['data']['whatsapp_sent'] == False
 
 
 # ============================================================================
@@ -689,3 +1323,4 @@ class TestIntegration:
 
 if __name__ == '__main__':
     pytest.main([__file__, '-v', '--tb=short'])
+

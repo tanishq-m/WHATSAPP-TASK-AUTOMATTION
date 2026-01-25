@@ -244,13 +244,15 @@ def create_project():
         project_id = f"proj_{random.randint(100, 999)}"
         
         # Prepare project data
+        # Accept both 'employeeIds' and 'assignedEmployees' from frontend
+        employee_ids = data.get('employeeIds') or data.get('assignedEmployees', [])
         project_data = {
             'id': project_id,
             'name': data['name'],
             'startDate': data.get('startDate', ''),
             'endDate': data.get('endDate', ''),
             'color': data.get('color', '#3B82F6'),
-            'employeeIds': data.get('employeeIds', [])
+            'assignedEmployees': employee_ids
         }
         
         result = database.create_project(project_data)
@@ -331,6 +333,8 @@ def delete_project_endpoint(project_id):
         
         if result['success']:
             return jsonify(result), 200
+        elif result.get('not_found'):
+            return jsonify(result), 404
         else:
             return jsonify(result), 500
             
@@ -541,6 +545,8 @@ def delete_task(task_id):
         if result['success']:
             print(f"✅ Deleted task: {task_id}")
             return jsonify(result), 200
+        elif result.get('not_found'):
+            return jsonify(result), 404
         else:
             return jsonify(result), 500
             
