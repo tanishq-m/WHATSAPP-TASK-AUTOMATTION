@@ -202,7 +202,7 @@ describe('API Service', () => {
         projectId: 'proj_1',
         assignedTo: 1,
         priority: 'high',
-        status: 'todo',
+        status: 'unassigned',
       };
 
       mockFetch.mockResolvedValueOnce(
@@ -303,7 +303,7 @@ describe('API Service', () => {
         createMockResponse({
           success: true,
           data: [
-            { task_id: 'task_001', title: 'Test Task', status: 'todo' }
+            { task_id: 'task_001', title: 'Test Task', status: 'unassigned' }
           ]
         })
       );
@@ -1561,7 +1561,7 @@ describe('Task ID Consistency', () => {
         data: [{ 
           task_id: 'task_123',
           title: 'Test Task',
-          status: 'todo'
+          status: 'unassigned'
         }] 
       })
     );

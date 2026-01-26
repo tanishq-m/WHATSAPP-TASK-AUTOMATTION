@@ -110,6 +110,10 @@ def init_database():
         cursor.execute("""
             INSERT OR IGNORE INTO sequences (name, current_value) VALUES ('task', 0)
         """)
+        # Initialize project sequence if not exists
+        cursor.execute("""
+            INSERT OR IGNORE INTO sequences (name, current_value) VALUES ('project', 0)
+        """)
         print("✅ Sequences table created/verified")
         
         # Create tasks table
@@ -336,7 +340,7 @@ def get_employee_by_id(employee_id):
                 return {"success": True, "data": dict(employee)}
             else:
                 print(f"⚠️  Employee not found: ID {employee_id}")
-                return {"success": False, "error": "Employee not found"}
+                return {"success": False, "error": "Employee not found", "not_found": True}
         
     except Exception as e:
         print(f"❌ Error getting employee: {e}")
@@ -438,26 +442,32 @@ def create_project(project_data):
     
     Args:
         project_data (dict): Project information
-            - id (str): Project ID (e.g., "proj_001")
-            - name (str): Project name
-            - start_date (str): ISO date string
-            - end_date (str): ISO date string
-            - color (str): Hex color code
-            - employee_ids (list): List of employee IDs to assign
+            - name (str): Project name (required)
+            - start_date (str): ISO date string (optional)
+            - end_date (str): ISO date string (optional)
+            - color (str): Hex color code (optional)
+            - employee_ids (list): List of employee IDs to assign (optional)
             
     Returns:
-        dict: Success response with created project or error
+        dict: Success response with created project (including generated ID) or error
     """
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor()
+            
+            # Generate unique project_id using sequence table (BUG-3 fix: prevents ID collisions)
+            cursor.execute("UPDATE sequences SET current_value = current_value + 1 WHERE name = 'project'")
+            cursor.execute("SELECT current_value FROM sequences WHERE name = 'project'")
+            result = cursor.fetchone()
+            next_id = result['current_value'] if result else 1
+            project_id = f"proj_{str(next_id).zfill(3)}"
             
             # Insert project
             cursor.execute("""
                 INSERT INTO projects (id, name, start_date, end_date, color)
                 VALUES (?, ?, ?, ?, ?)
             """, (
-                project_data['id'],
+                project_id,
                 project_data['name'],
                 project_data.get('startDate', ''),
                 project_data.get('endDate', ''),
@@ -472,13 +482,13 @@ def create_project(project_data):
                     cursor.execute("""
                         INSERT INTO project_employees (project_id, employee_id)
                         VALUES (?, ?)
-                    """, (project_data['id'], emp_id))
+                    """, (project_id, emp_id))
             
             conn.commit()
             
             # Return properly formatted response with assigned_employees
             response_data = {
-                'id': project_data['id'],
+                'id': project_id,
                 'name': project_data['name'],
                 'start_date': project_data.get('startDate', ''),
                 'end_date': project_data.get('endDate', ''),

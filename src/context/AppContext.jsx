@@ -14,6 +14,7 @@ export const AppProvider = ({ children }) => {
   const [timerConfig, setTimerConfig] = useState(null)
   const [toast, setToast] = useState({ show: false, message: '', type: 'info' })
   const [loading, setLoading] = useState(false)
+  const [isOffline, setIsOffline] = useState(false)
 
   // Initialize data from localStorage
   useEffect(() => {
@@ -93,6 +94,12 @@ export const AppProvider = ({ children }) => {
 
     if (apiSuccess) {
       console.log("✅ All data synced from backend to localStorage")
+      setIsOffline(false)
+    } else {
+      setIsOffline(true)
+      if (!toast.show) {
+        showToast("⚠️ Offline Mode - Cannot save changes until reconnected", "warning")
+      }
     }
 
     setTimerConfig(storageService.getTimerConfig())
@@ -176,6 +183,11 @@ export const AppProvider = ({ children }) => {
 
   // Project operations
   const addProject = async (project) => {
+    if (isOffline) {
+      showToast('⚠️ Cannot create project while offline', 'error')
+      return null
+    }
+    
     try {
       console.log("🔄 Creating project via API...", project)
       const newProject = await apiService.createProject(project)
@@ -184,15 +196,18 @@ export const AppProvider = ({ children }) => {
       return newProject
     } catch (error) {
       console.error("❌ Failed to create project via API:", error)
-      // Fallback to localStorage
-      const newProject = storageService.addProject(project)
-      setProjects(getProjectsWithStats())
-      showToast('Project created (offline mode)', 'warning')
-      return newProject
+      setIsOffline(true)
+      showToast('⚠️ Connection lost - Cannot save changes', 'error')
+      return null
     }
   }
 
   const updateProject = async (id, updates) => {
+    if (isOffline) {
+      showToast('⚠️ Cannot update project while offline', 'error')
+      return
+    }
+    
     try {
       console.log(`🔄 Updating project ${id} via API...`, updates)
       await apiService.updateProject(id, updates)
@@ -200,14 +215,17 @@ export const AppProvider = ({ children }) => {
       showToast('Project updated successfully!', 'success')
     } catch (error) {
       console.error("❌ Failed to update project via API:", error)
-      // Fallback to localStorage
-      storageService.updateProject(id, updates)
-      setProjects(getProjectsWithStats())
-      showToast('Project updated (offline mode)', 'warning')
+      setIsOffline(true)
+      showToast('⚠️ Connection lost - Cannot save changes', 'error')
     }
   }
 
   const deleteProject = async (id) => {
+    if (isOffline) {
+      showToast('⚠️ Cannot delete project while offline', 'error')
+      return
+    }
+    
     try {
       console.log(`🔄 Deleting project ${id} via API...`)
       await apiService.deleteProject(id)
@@ -215,10 +233,8 @@ export const AppProvider = ({ children }) => {
       showToast('Project deleted successfully!', 'success')
     } catch (error) {
       console.error("❌ Failed to delete project via API:", error)
-      // Fallback to localStorage
-      storageService.deleteProject(id)
-      setProjects(getProjectsWithStats())
-      showToast('Project deleted (offline mode)', 'warning')
+      setIsOffline(true)
+      showToast('⚠️ Connection lost - Cannot save changes', 'error')
     }
   }
 
@@ -228,25 +244,37 @@ export const AppProvider = ({ children }) => {
 
   // Task operations
   const addTask = async (task) => {
+    if (isOffline) {
+      showToast('⚠️ Cannot create task while offline', 'error')
+      return null
+    }
+    
     try {
       console.log("📡 Creating task via API...")
       const newTask = await apiService.createTask(task)
       // Refresh tasks from API
       const tasksData = await apiService.getTasks()
       setTasks(tasksData)
+      
+      // Update localStorage cache
+      storageService.setTasks(tasksData)
+      
       showToast('Task created successfully!', 'success')
       return newTask
     } catch (error) {
       console.error("❌ Failed to create task via API:", error)
-      // Fallback to localStorage
-      const newTask = storageService.addTask(task)
-      setTasks(storageService.getTasks())
-      showToast('Task created (offline mode)', 'warning')
-      return newTask
+      setIsOffline(true)
+      showToast('⚠️ Connection lost - Cannot save changes', 'error')
+      return null
     }
   }
 
   const updateTask = async (id, updates, source = 'admin') => {
+    if (isOffline) {
+      showToast('⚠️ Cannot update task while offline', 'error')
+      return
+    }
+    
     // Store previous state for potential rollback
     const previousTasks = [...tasks]
     
@@ -271,37 +299,41 @@ export const AppProvider = ({ children }) => {
       // Refresh tasks from API to get latest data
       const tasksData = await apiService.getTasks()
       setTasks(tasksData)
+      
+      // Update localStorage cache
+      storageService.setTasks(tasksData)
+      
       showToast('Task updated successfully!', 'success')
     } catch (error) {
       console.error("❌ Failed to update task via API:", error)
       // Revert optimistic update on error - restore previous state
       setTasks(previousTasks)
-      // Try fallback to localStorage
-      try {
-        storageService.updateTask(id, updates)
-        setTasks(storageService.getTasks())
-        showToast('Task updated (offline mode)', 'warning')
-      } catch (localError) {
-        console.error("❌ LocalStorage fallback also failed:", localError)
-        showToast('Failed to update task. Please try again.', 'error')
-      }
+      setIsOffline(true)
+      showToast('⚠️ Connection lost - Cannot save changes', 'error')
     }
   }
 
   const deleteTask = async (id) => {
+    if (isOffline) {
+      showToast('⚠️ Cannot delete task while offline', 'error')
+      return
+    }
+    
     try {
       console.log(`📡 Deleting task ${id} via API...`)
       await apiService.deleteTask(id)
       // Refresh tasks from API
       const tasksData = await apiService.getTasks()
       setTasks(tasksData)
+      
+      // Update localStorage cache
+      storageService.saveTasks(tasksData)
+      
       showToast('Task deleted successfully!', 'success')
     } catch (error) {
       console.error("❌ Failed to delete task via API:", error)
-      // Fallback to localStorage
-      storageService.deleteTask(id)
-      setTasks(storageService.getTasks())
-      showToast('Task deleted (offline mode)', 'warning')
+      setIsOffline(true)
+      showToast('⚠️ Connection lost - Cannot save changes', 'error')
     }
   }
 
@@ -356,6 +388,7 @@ export const AppProvider = ({ children }) => {
     timerConfig,
     toast,
     loading,
+    isOffline,
     
     // Project methods
     addProject,

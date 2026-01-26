@@ -112,7 +112,7 @@ def sample_task(client, sample_project, sample_employee):
             'assignedTo': sample_employee,
             'dueDate': '2026-02-01',
             'priority': 'high',
-            'status': 'todo'
+            'status': 'unassigned'
         }),
         content_type='application/json'
     )
@@ -169,6 +169,30 @@ class TestEmployees:
         """GET /api/employees/<id> with invalid ID should return 404."""
         response = client.get('/api/employees/9999')
         assert response.status_code == 404
+        
+        data = json.loads(response.data)
+        assert data['success'] == False
+    
+    def test_get_employee_not_found_returns_proper_error(self, client):
+        """BUG-5: Employee not found should return 404 with not_found flag, not 500."""
+        response = client.get('/api/employees/99999')
+        
+        # Should be 404, not 500
+        assert response.status_code == 404
+        
+        data = json.loads(response.data)
+        assert data['success'] == False
+        assert data.get('not_found') == True, "Response should include not_found flag"
+        assert 'error' in data
+        assert 'not found' in data['error'].lower()
+    
+    def test_get_employee_database_error_returns_500(self, client):
+        """BUG-5: Database errors should return 500, not 404."""
+        # Test with invalid ID format that might cause database error
+        response = client.get('/api/employees/invalid_id_string')
+        
+        # Should handle gracefully
+        assert response.status_code in [404, 500]
         
         data = json.loads(response.data)
         assert data['success'] == False
@@ -391,6 +415,63 @@ class TestProjects:
         data = json.loads(response.data)
         assert data['success'] == True
         assert len(data['data']['assigned_employees']) == 3
+    
+    def test_project_id_generation_uses_sequence(self, client):
+        """BUG-3: Project IDs should be generated using sequences to prevent collisions."""
+        # Create first project
+        response1 = client.post('/api/projects',
+            data=json.dumps({'name': 'Project 1'}),
+            content_type='application/json'
+        )
+        assert response1.status_code == 201
+        data1 = json.loads(response1.data)
+        project_id_1 = data1['data']['id']
+        
+        # Create second project
+        response2 = client.post('/api/projects',
+            data=json.dumps({'name': 'Project 2'}),
+            content_type='application/json'
+        )
+        assert response2.status_code == 201
+        data2 = json.loads(response2.data)
+        project_id_2 = data2['data']['id']
+        
+        # IDs should be sequential (not random)
+        assert project_id_1.startswith('proj_')
+        assert project_id_2.startswith('proj_')
+        
+        # Extract numeric parts
+        num1 = int(project_id_1.split('_')[1])
+        num2 = int(project_id_2.split('_')[1])
+        
+        # Second ID should be exactly 1 more than first
+        assert num2 == num1 + 1, f"Expected sequential IDs, got {project_id_1} and {project_id_2}"
+        
+    def test_project_id_never_decreases_after_deletion(self, client):
+        """BUG-3: Project sequence should never decrease, even after deletions."""
+        # Create project
+        response1 = client.post('/api/projects',
+            data=json.dumps({'name': 'Project to Delete'}),
+            content_type='application/json'
+        )
+        data1 = json.loads(response1.data)
+        project_id_1 = data1['data']['id']
+        num1 = int(project_id_1.split('_')[1])
+        
+        # Delete the project
+        client.delete(f'/api/projects/{project_id_1}')
+        
+        # Create another project - ID should be higher than deleted one
+        response2 = client.post('/api/projects',
+            data=json.dumps({'name': 'New Project After Delete'}),
+            content_type='application/json'
+        )
+        data2 = json.loads(response2.data)
+        project_id_2 = data2['data']['id']
+        num2 = int(project_id_2.split('_')[1])
+        
+        # New ID should be greater than deleted ID
+        assert num2 > num1, f"Sequence decreased: {project_id_1} then {project_id_2}"
 
 
 # ============================================================================
@@ -419,7 +500,7 @@ class TestTasks:
                 'assignedTo': sample_employee,
                 'dueDate': '2026-03-01',
                 'priority': 'medium',
-                'status': 'todo'
+                'status': 'unassigned'
             }),
             content_type='application/json'
         )
@@ -462,6 +543,30 @@ class TestTasks:
         assert data['success'] == True
         assert data['data']['title'] == 'Minimal Task'
         assert data['data']['priority'] == 'medium'  # Default value
+        assert data['data']['status'] == 'unassigned'  # BUG-1 fix: Default status should be 'unassigned'
+    
+    def test_create_task_default_status_is_unassigned(self, client, sample_project):
+        """BUG-1: Tasks created without explicit status should default to 'unassigned'."""
+        response = client.post('/api/tasks',
+            data=json.dumps({
+                'title': 'Task Without Status',
+                'projectId': sample_project,
+                'priority': 'high'
+                # No status field provided
+            }),
+            content_type='application/json'
+        )
+        assert response.status_code == 201
+        
+        data = json.loads(response.data)
+        assert data['success'] == True
+        assert data['data']['status'] == 'unassigned', "Task without explicit status must default to 'unassigned'"
+        
+        # Verify task appears in database with correct status
+        task_id = data['data']['task_id']
+        get_response = client.get(f'/api/tasks/{task_id}')
+        get_data = json.loads(get_response.data)
+        assert get_data['data']['status'] == 'unassigned'
     
     def test_get_task_by_id(self, client, sample_task):
         """GET /api/tasks/<task_id> should return specific task."""
@@ -802,6 +907,32 @@ class TestWhatsAppIntegration:
         response = client.get(f'/api/tasks/{sample_task}')
         data = json.loads(response.data)
         assert data['data']['whatsapp_response'] == 'completed'
+    
+    def test_send_whatsapp_updates_whatsapp_sent_field(self, client, sample_task, sample_employee, mock_kapso):
+        """BUG-2: Sending WhatsApp should update whatsappSent field correctly."""
+        # Verify task initially has whatsapp_sent = False/0
+        response = client.get(f'/api/tasks/{sample_task}')
+        data = json.loads(response.data)
+        initial_whatsapp_sent = data['data'].get('whatsapp_sent', False)
+        assert not initial_whatsapp_sent, "Task should not have whatsapp_sent set initially"
+        
+        # Send task to WhatsApp
+        response = client.post(f'/api/tasks/{sample_task}/send-whatsapp-buttons')
+        assert response.status_code == 200
+        
+        data = json.loads(response.data)
+        assert data['success'] == True, f"Failed to send WhatsApp: {data}"
+        
+        # Verify whatsapp_sent field was updated in database
+        response = client.get(f'/api/tasks/{sample_task}')
+        data = json.loads(response.data)
+        assert data['data']['whatsapp_sent'] == True, "whatsapp_sent should be True after sending"
+        
+        # Verify via WhatsApp status endpoint
+        response = client.get(f'/api/tasks/{sample_task}/whatsapp-status')
+        assert response.status_code == 200
+        data = json.loads(response.data)
+        assert data['data']['whatsapp_sent'] == True, "WhatsApp status should show sent=True"
 
 
 # ============================================================================
