@@ -7,17 +7,22 @@ const Select = ({
   required = false,
   disabled = false,
   placeholder = 'Select an option',
-  className = ''
+  className = '',
+  id
 }) => {
+  // Generate a unique id if not provided but label exists
+  const selectId = id || (label ? `select-${label.toLowerCase().replace(/\s+/g, '-')}` : undefined)
+  
   return (
     <div className={`w-full ${className}`}>
       {label && (
-        <label className="label">
+        <label htmlFor={selectId} className="label">
           {label}
           {required && <span className="text-red-500 ml-1">*</span>}
         </label>
       )}
       <select
+        id={selectId}
         value={value || ''}
         onChange={onChange}
         required={required}

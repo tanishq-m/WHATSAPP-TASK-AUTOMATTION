@@ -20,7 +20,8 @@ from unittest.mock import patch, MagicMock
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from app import app
-import database
+import config
+import db
 
 
 # ============================================================================
@@ -30,9 +31,9 @@ import database
 @pytest.fixture
 def mock_kapso():
     """Mock Kapso WhatsApp API to prevent actual message sending during tests."""
-    with patch('kapso_service.send_text_message') as mock_send_text, \
-         patch('kapso_service.send_task_assignment') as mock_send_task, \
-         patch('kapso_service.send_interactive_buttons') as mock_send_buttons:
+    with patch('services.kapso_service.send_text_message') as mock_send_text, \
+         patch('services.kapso_service.send_task_assignment') as mock_send_task, \
+         patch('services.kapso_service.send_interactive_buttons') as mock_send_buttons:
         
         # Mock successful responses
         mock_send_text.return_value = {"success": True, "data": {"messages": [{"id": "mock_msg_id"}]}}
@@ -52,11 +53,11 @@ def client():
     db_fd, db_path = tempfile.mkstemp()
     
     # Override the database path
-    original_db_path = database.DATABASE_PATH
-    database.DATABASE_PATH = db_path
+    original_db_path = config.DATABASE_PATH
+    config.DATABASE_PATH = db_path
     
     # Initialize the test database
-    database.init_database()
+    db.init_database()
     
     # Create test client
     app.config['TESTING'] = True
@@ -64,7 +65,7 @@ def client():
         yield client
     
     # Cleanup
-    database.DATABASE_PATH = original_db_path
+    config.DATABASE_PATH = original_db_path
     os.close(db_fd)
     os.unlink(db_path)
 
@@ -72,7 +73,7 @@ def client():
 @pytest.fixture
 def sample_employee(client):
     """Create a sample employee for testing."""
-    conn = sqlite3.connect(database.DATABASE_PATH)
+    conn = sqlite3.connect(config.DATABASE_PATH)
     cursor = conn.cursor()
     cursor.execute("""
         INSERT INTO employees (name, phone, role, created_at)
@@ -388,7 +389,7 @@ class TestProjects:
     def test_project_with_multiple_team_members(self, client):
         """POST /api/projects with multiple team members should succeed (P3-9)."""
         # Create multiple employees
-        conn = sqlite3.connect(database.DATABASE_PATH)
+        conn = sqlite3.connect(config.DATABASE_PATH)
         cursor = conn.cursor()
         cursor.execute("INSERT INTO employees (name, phone, role) VALUES (?, ?, ?)", 
                        ('Member 1', '+911111111111', 'Dev'))
@@ -944,7 +945,7 @@ class TestDatabase:
     
     def test_init_database_creates_tables(self, client):
         """init_database should create all required tables."""
-        conn = sqlite3.connect(database.DATABASE_PATH)
+        conn = sqlite3.connect(config.DATABASE_PATH)
         cursor = conn.cursor()
         
         # Check tables exist
@@ -963,7 +964,8 @@ class TestDatabase:
     
     def test_database_connection(self, client):
         """Database should be connectable."""
-        result = database.get_all_employees()
+        from db.employees import get_all_employees
+        result = get_all_employees()
         assert result['success'] == True
 
     def test_get_db_connection_context_manager(self, client):
@@ -974,14 +976,15 @@ class TestDatabase:
         on errors, causing "database is locked" errors.
         """
         # The context manager should work even if we query inside it
-        with database.get_db_connection() as conn:
+        with db.get_db_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT COUNT(*) FROM employees")
             count = cursor.fetchone()[0]
             assert count >= 0
         
         # After exiting the context, we should be able to get a new connection
-        result = database.get_all_employees()
+        from db.employees import get_all_employees
+        result = get_all_employees()
         assert result['success'] == True
 
     def test_database_connection_closes_on_error(self, client):
@@ -991,7 +994,7 @@ class TestDatabase:
         This prevents database locking issues.
         """
         try:
-            with database.get_db_connection() as conn:
+            with db.get_db_connection() as conn:
                 cursor = conn.cursor()
                 # This should fail - invalid table
                 cursor.execute("SELECT * FROM nonexistent_table_xyz")
@@ -999,7 +1002,8 @@ class TestDatabase:
             pass  # Expected to fail
         
         # Connection should still be closed, allowing new operations
-        result = database.get_all_employees()
+        from db.employees import get_all_employees
+        result = get_all_employees()
         assert result['success'] == True
 
 
@@ -1327,8 +1331,16 @@ class TestEdgeCases:
     # -------------------------------------------------------------------------
 
     def test_get_employee_with_string_id(self, client):
-        """Getting employee with string ID should work (ID 1)."""
-        response = client.get('/api/employees/1')
+        """Getting employee with string ID should work (ID conversion)."""
+        # First create an employee
+        response = client.post('/api/employees', 
+                               json={'name': 'String ID Test', 'phone': '+919999999999', 'role': 'Tester'})
+        assert response.status_code == 201
+        employee_data = json.loads(response.data)
+        employee_id = employee_data['data']['id']
+        
+        # Now test that we can fetch it using string ID
+        response = client.get(f'/api/employees/{employee_id}')
         assert response.status_code == 200
 
     def test_get_employee_with_negative_id(self, client):
@@ -1649,6 +1661,366 @@ class TestProjectDescription:
         data = json.loads(response.data)
         assert data['data']['name'] == 'Updated Name Only'
         assert data['data']['description'] == 'Test Description'  # Should be unchanged
+
+
+# ============================================================================
+# EMPLOYEE CRUD TESTS (Merged from test_employee_crud.py)
+# ============================================================================
+
+class TestEmployeeCRUD:
+    """Test class for Employee CRUD operations"""
+    
+    @pytest.fixture
+    def unique_phone(self):
+        """Generate a unique phone number for testing"""
+        import time
+        import random
+        timestamp = str(int(time.time()))[-6:]
+        random_suffix = random.randint(10, 99)
+        return f"+91{timestamp}{random_suffix}"
+    
+    def test_create_employee_success(self, client, unique_phone):
+        """POST /api/employees with valid data creates employee"""
+        employee_data = {
+            "name": "Test Employee",
+            "phone": unique_phone,
+            "role": "Developer"
+        }
+        response = client.post('/api/employees', 
+                             data=json.dumps(employee_data),
+                             content_type='application/json')
+        
+        assert response.status_code == 201
+        data = json.loads(response.data)
+        assert data['success'] == True
+        assert data['data']['name'] == employee_data['name']
+        assert data['data']['phone'] == employee_data['phone']
+        assert data['data']['role'] == employee_data['role']
+        assert 'id' in data['data']
+    
+    def test_create_employee_missing_name(self, client):
+        """POST /api/employees without name returns 400"""
+        employee_data = {"phone": "+918888888888", "role": "Developer"}
+        response = client.post('/api/employees',
+                             data=json.dumps(employee_data),
+                             content_type='application/json')
+        
+        assert response.status_code == 400
+        data = json.loads(response.data)
+        assert data['success'] == False
+        assert 'name' in data['error'].lower()
+    
+    def test_create_employee_missing_phone(self, client):
+        """POST /api/employees without phone returns 400"""
+        employee_data = {"name": "Test Employee", "role": "Developer"}
+        response = client.post('/api/employees',
+                             data=json.dumps(employee_data),
+                             content_type='application/json')
+        
+        assert response.status_code == 400
+        data = json.loads(response.data)
+        assert data['success'] == False
+        assert 'phone' in data['error'].lower()
+    
+    def test_create_employee_missing_role(self, client):
+        """POST /api/employees without role returns 400"""
+        employee_data = {"name": "Test Employee", "phone": "+918888888888"}
+        response = client.post('/api/employees',
+                             data=json.dumps(employee_data),
+                             content_type='application/json')
+        
+        assert response.status_code == 400
+        data = json.loads(response.data)
+        assert data['success'] == False
+        assert 'role' in data['error'].lower()
+    
+    def test_create_employee_invalid_phone_no_plus(self, client):
+        """POST /api/employees with phone missing + prefix returns 400"""
+        employee_data = {
+            "name": "Test Employee",
+            "phone": "918888888888",  # Missing +
+            "role": "Developer"
+        }
+        response = client.post('/api/employees',
+                             data=json.dumps(employee_data),
+                             content_type='application/json')
+        
+        assert response.status_code == 400
+        data = json.loads(response.data)
+        assert data['success'] == False
+        assert 'country code' in data['error']
+    
+    def test_create_employee_invalid_phone_too_short(self, client):
+        """POST /api/employees with phone too short returns 400"""
+        employee_data = {
+            "name": "Test Employee", 
+            "phone": "+91888",  # Too short
+            "role": "Developer"
+        }
+        response = client.post('/api/employees',
+                             data=json.dumps(employee_data),
+                             content_type='application/json')
+        
+        assert response.status_code == 400
+        data = json.loads(response.data)
+        assert data['success'] == False
+        assert 'country code' in data['error']
+    
+    def test_create_employee_duplicate_phone(self, client, unique_phone):
+        """POST /api/employees with existing phone returns 400"""
+        # Create first employee
+        employee_data = {"name": "First Employee", "phone": unique_phone, "role": "Developer"}
+        client.post('/api/employees',
+                   data=json.dumps(employee_data),
+                   content_type='application/json')
+        
+        # Try to create another with same phone
+        duplicate_data = {
+            "name": "Another Employee",
+            "phone": unique_phone,  # Same phone
+            "role": "Designer"
+        }
+        response = client.post('/api/employees',
+                             data=json.dumps(duplicate_data),
+                             content_type='application/json')
+        
+        assert response.status_code == 400
+        data = json.loads(response.data)
+        assert data['success'] == False
+        assert 'already exists' in data['error']
+    
+    def test_update_employee_success(self, client, unique_phone):
+        """PUT /api/employees/<id> updates employee successfully"""
+        # Create employee first
+        employee_data = {"name": "Test Employee", "phone": unique_phone, "role": "Developer"}
+        create_response = client.post('/api/employees',
+                                    data=json.dumps(employee_data),
+                                    content_type='application/json')
+        created_employee = json.loads(create_response.data)['data']
+        employee_id = created_employee['id']
+        
+        # Update employee
+        update_data = {"name": "Updated Name", "role": "Senior Developer"}
+        response = client.put(f'/api/employees/{employee_id}',
+                            data=json.dumps(update_data),
+                            content_type='application/json')
+        
+        assert response.status_code == 200
+        data = json.loads(response.data)
+        assert data['success'] == True
+        assert data['data']['name'] == "Updated Name"
+        assert data['data']['role'] == "Senior Developer"
+        assert data['data']['phone'] == unique_phone  # Unchanged
+    
+    def test_update_employee_not_found(self, client):
+        """PUT /api/employees/<id> with invalid ID returns 404"""
+        update_data = {"name": "Updated Name"}
+        response = client.put('/api/employees/99999',
+                            data=json.dumps(update_data),
+                            content_type='application/json')
+        
+        assert response.status_code == 404
+        data = json.loads(response.data)
+        assert data['success'] == False
+        assert 'not found' in data['error'].lower()
+    
+    def test_update_employee_duplicate_phone(self, client):
+        """PUT /api/employees/<id> with existing phone returns 400"""
+        import time
+        import random
+        timestamp = str(int(time.time()))[-6:]
+        random1 = random.randint(10, 49)
+        random2 = random.randint(50, 99)
+        
+        # Create two employees with unique phones
+        employee1 = {"name": "Employee 1", "phone": f"+91{timestamp}{random1}", "role": "Developer"}
+        employee2 = {"name": "Employee 2", "phone": f"+91{timestamp}{random2}", "role": "Designer"}
+        
+        client.post('/api/employees', data=json.dumps(employee1), content_type='application/json')
+        response2 = client.post('/api/employees', data=json.dumps(employee2), content_type='application/json')
+        
+        employee2_id = json.loads(response2.data)['data']['id']
+        
+        # Try to update employee2 with employee1's phone
+        update_data = {"phone": employee1['phone']}
+        response = client.put(f'/api/employees/{employee2_id}',
+                            data=json.dumps(update_data),
+                            content_type='application/json')
+        
+        assert response.status_code == 400
+        data = json.loads(response.data)
+        assert data['success'] == False
+        assert 'already exists' in data['error']
+    
+    def test_delete_employee_success(self, client, unique_phone):
+        """DELETE /api/employees/<id> removes employee successfully"""
+        # Create employee first
+        employee_data = {"name": "Test Employee", "phone": unique_phone, "role": "Developer"}
+        create_response = client.post('/api/employees',
+                                    data=json.dumps(employee_data),
+                                    content_type='application/json')
+        created_employee = json.loads(create_response.data)['data']
+        employee_id = created_employee['id']
+        
+        # Delete employee
+        response = client.delete(f'/api/employees/{employee_id}')
+        
+        assert response.status_code == 200
+        data = json.loads(response.data)
+        assert data['success'] == True
+        assert 'deleted successfully' in data['message']
+    
+    def test_delete_employee_not_found(self, client):
+        """DELETE /api/employees/<id> with invalid ID returns 404"""
+        response = client.delete('/api/employees/99999')
+        
+        assert response.status_code == 404
+        data = json.loads(response.data)
+        assert data['success'] == False
+        assert 'not found' in data['error'].lower()
+    
+    def test_delete_employee_with_tasks_cascading(self, client, unique_phone):
+        """DELETE /api/employees/<id> properly handles task cascading"""
+        # Create employee
+        employee_data = {"name": "Task Cascade Test", "phone": unique_phone, "role": "Developer"}
+        create_response = client.post('/api/employees',
+                                    data=json.dumps(employee_data),
+                                    content_type='application/json')
+        employee_id = json.loads(create_response.data)['data']['id']
+        
+        # Create project first
+        project_data = {
+            "name": "Test Project",
+            "assignedEmployees": [employee_id]
+        }
+        project_response = client.post('/api/projects',
+                                     data=json.dumps(project_data),
+                                     content_type='application/json')
+        project = json.loads(project_response.data)['data']
+        
+        # Create task assigned to this employee
+        task_data = {
+            "title": "Test Task",
+            "projectId": project['id'],
+            "employeeId": employee_id,
+            "priority": "high"
+        }
+        task_response = client.post('/api/tasks',
+                                  data=json.dumps(task_data),
+                                  content_type='application/json')
+        task = json.loads(task_response.data)['data']
+        
+        # Delete employee
+        delete_response = client.delete(f'/api/employees/{employee_id}')
+        assert delete_response.status_code == 200
+        
+        # Verify task is now unassigned
+        task_response = client.get(f'/api/tasks/{task["task_id"]}')
+        updated_task = json.loads(task_response.data)['data']
+        assert updated_task['employee_id'] is None
+        assert updated_task['status'] == 'unassigned'
+    
+    def test_employee_crud_integration(self, client):
+        """Integration test for complete employee lifecycle"""
+        import time
+        import random
+        timestamp = str(int(time.time()))[-6:]
+        random_suffix = random.randint(100, 999)
+        
+        # 1. Create employee
+        employee_data = {
+            "name": "Integration Test Employee",
+            "phone": f"+91{timestamp}{random_suffix}",
+            "role": "Developer"
+        }
+        
+        create_response = client.post('/api/employees',
+                                    data=json.dumps(employee_data),
+                                    content_type='application/json')
+        assert create_response.status_code == 201
+        created_employee = json.loads(create_response.data)['data']
+        employee_id = created_employee['id']
+        
+        # 2. Get employee by ID
+        get_response = client.get(f'/api/employees/{employee_id}')
+        assert get_response.status_code == 200
+        fetched_employee = json.loads(get_response.data)['data']
+        assert fetched_employee['name'] == employee_data['name']
+        
+        # 3. Update employee
+        update_data = {"name": "Updated Integration Employee", "role": "Senior Developer"}
+        update_response = client.put(f'/api/employees/{employee_id}',
+                                   data=json.dumps(update_data),
+                                   content_type='application/json')
+        assert update_response.status_code == 200
+        
+        # 4. Verify update
+        get_response2 = client.get(f'/api/employees/{employee_id}')
+        updated_employee = json.loads(get_response2.data)['data']
+        assert updated_employee['name'] == "Updated Integration Employee"
+        assert updated_employee['role'] == "Senior Developer"
+        
+        # 5. List all employees (should include our employee)
+        list_response = client.get('/api/employees')
+        assert list_response.status_code == 200
+        employees_list = json.loads(list_response.data)['data']
+        employee_ids = [emp['id'] for emp in employees_list]
+        assert employee_id in employee_ids
+        
+        # 6. Delete employee
+        delete_response = client.delete(f'/api/employees/{employee_id}')
+        assert delete_response.status_code == 200
+        
+        # 7. Verify deletion
+        get_response3 = client.get(f'/api/employees/{employee_id}')
+        assert get_response3.status_code == 404
+    
+    def test_empty_and_whitespace_handling(self, client):
+        """Test handling of empty and whitespace-only values"""
+        test_cases = [
+            {"name": "", "phone": "+919876543210", "role": "Developer"},  # Empty name
+            {"name": "   ", "phone": "+919876543210", "role": "Developer"},  # Whitespace name
+            {"name": "Test", "phone": "", "role": "Developer"},  # Empty phone
+            {"name": "Test", "phone": "+919876543210", "role": ""},  # Empty role
+            {"name": "Test", "phone": "+919876543210", "role": "   "},  # Whitespace role
+        ]
+        
+        for employee_data in test_cases:
+            response = client.post('/api/employees',
+                                 data=json.dumps(employee_data),
+                                 content_type='application/json')
+            assert response.status_code == 400
+            data = json.loads(response.data)
+            assert data['success'] == False
+    
+    def test_special_characters_in_name(self, client):
+        """Test names with special characters"""
+        import time
+        base_timestamp = str(int(time.time()))[-6:]
+        
+        special_names = [
+            "José María",
+            "李明",
+            "Müller-Schmidt",
+            "O'Connor",
+            "Jean-Pierre",
+            "Андрей"
+        ]
+        
+        for i, name in enumerate(special_names):
+            employee_data = {
+                "name": name,
+                "phone": f"+91{base_timestamp}{i:02d}",
+                "role": "Developer"
+            }
+            
+            response = client.post('/api/employees',
+                                 data=json.dumps(employee_data),
+                                 content_type='application/json')
+            
+            assert response.status_code == 201, f"Failed for name: {name}"
+            created_employee = json.loads(response.data)['data']
+            assert created_employee['name'] == name
 
 
 # ============================================================================

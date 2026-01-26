@@ -11,7 +11,7 @@ import { validateProject } from '../../utils/validators'
 
 const CreateProjectModal = ({ isOpen, onClose, project = null }) => {
   const navigate = useNavigate()
-  const { employees, addProject, updateProject } = useApp()
+  const { employees, addProject, updateProject, setModalOpen } = useApp()
   const isEditing = !!project
   
   const [formData, setFormData] = useState({
@@ -24,9 +24,14 @@ const CreateProjectModal = ({ isOpen, onClose, project = null }) => {
   
   const [errors, setErrors] = useState({})
 
-  // Pre-fill form when editing
+  // Track modal state for auto-refresh pausing
   useEffect(() => {
-    if (project) {
+    setModalOpen(isOpen)
+  }, [isOpen, setModalOpen])
+
+  // Pre-fill form when editing - only run when modal opens (isOpen changes)
+  useEffect(() => {
+    if (isOpen && project) {
       setFormData({
         name: project.name || '',
         description: project.description || '',
@@ -35,7 +40,7 @@ const CreateProjectModal = ({ isOpen, onClose, project = null }) => {
         assignedEmployees: project.assignedEmployees || []
       })
     }
-  }, [project])
+  }, [isOpen, project?.id])
 
   const handleChange = (field, value) => {
     setFormData(prev => ({ ...prev, [field]: value }))
@@ -139,8 +144,8 @@ const CreateProjectModal = ({ isOpen, onClose, project = null }) => {
             value={formData.description}
             onChange={(e) => handleChange('description', e.target.value)}
             placeholder="Brief description of the project..."
-            rows={3}
-            className="input-field resize-none"
+            rows={5}
+            className="input-field resize-none w-full min-h-[120px]"
           />
         </div>
 

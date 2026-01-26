@@ -11,7 +11,7 @@ import { PRIORITY, STATUS, PRIORITY_LABELS, STATUS_LABELS } from '../../utils/co
 import { validateTask } from '../../utils/validators'
 
 const TaskModal = ({ isOpen, onClose, task = null, projectId = null }) => {
-  const { employees, projects, addTask, updateTask, sendTaskToWhatsApp } = useApp()
+  const { employees, projects, addTask, updateTask, sendTaskToWhatsApp, setModalOpen } = useApp()
   
   const isEditing = !!task
   
@@ -27,8 +27,14 @@ const TaskModal = ({ isOpen, onClose, task = null, projectId = null }) => {
   
   const [errors, setErrors] = useState({})
 
+  // Track modal state for auto-refresh pausing
   useEffect(() => {
-    if (task) {
+    setModalOpen(isOpen)
+  }, [isOpen, setModalOpen])
+
+  // Pre-fill form only when modal opens, not on every task update
+  useEffect(() => {
+    if (isOpen && task) {
       setFormData({
         title: task.title,
         description: task.description || '',
@@ -38,13 +44,24 @@ const TaskModal = ({ isOpen, onClose, task = null, projectId = null }) => {
         priority: task.priority,
         status: task.status
       })
-    } else if (projectId) {
+    } else if (isOpen && projectId && !task) {
       setFormData(prev => ({ ...prev, projectId }))
     }
-  }, [task, projectId])
+  }, [isOpen, task?.id, projectId])
 
   const handleChange = (field, value) => {
-    setFormData(prev => ({ ...prev, [field]: value }))
+    // If project changes, clear the assigned employee
+    // (they might not be part of the new project)
+    if (field === 'projectId') {
+      setFormData(prev => ({ 
+        ...prev, 
+        [field]: value,
+        assignedTo: null  // Clear assignment when project changes
+      }))
+    } else {
+      setFormData(prev => ({ ...prev, [field]: value }))
+    }
+    
     if (errors[field]) {
       setErrors(prev => ({ ...prev, [field]: '' }))
     }
@@ -102,7 +119,20 @@ const TaskModal = ({ isOpen, onClose, task = null, projectId = null }) => {
   }
 
   const projectOptions = projects.map(p => ({ value: p.id, label: p.name }))
-  const employeeOptions = employees.map(e => ({ value: e.id, label: e.name }))
+  
+  // Filter employees to show only those assigned to the selected project
+  const getProjectEmployees = () => {
+    if (!formData.projectId) return []
+    
+    const selectedProject = projects.find(p => p.id === formData.projectId)
+    if (!selectedProject || !selectedProject.assignedEmployees) return []
+    
+    // Filter employees to only those in the project's assignedEmployees array
+    return employees.filter(e => selectedProject.assignedEmployees.includes(e.id))
+  }
+  
+  const employeeOptions = getProjectEmployees().map(e => ({ value: e.id, label: e.name }))
+  
   const priorityOptions = Object.values(PRIORITY).map(p => ({ 
     value: p, 
     label: PRIORITY_LABELS[p] 

@@ -1,13 +1,13 @@
-import { createContext, useState, useEffect, useCallback } from 'react'
+import { createContext, useState, useEffect, useCallback, useRef } from 'react'
 import storageService from '../services/localStorage.service'
-import apiService from '../services/api.service'
+import * as apiService from '../services/api.service'
 import timerService from '../services/timer.service'
 import { calculateProgress } from '../utils/helpers'
 import { STATUS } from '../utils/constants'
 
 export const AppContext = createContext()
 
-export const AppProvider = ({ children }) => {
+const AppProvider = ({ children }) => {
   const [projects, setProjects] = useState([])
   const [tasks, setTasks] = useState([])
   const [employees, setEmployees] = useState([])
@@ -15,6 +15,15 @@ export const AppProvider = ({ children }) => {
   const [toast, setToast] = useState({ show: false, message: '', type: 'info' })
   const [loading, setLoading] = useState(false)
   const [isOffline, setIsOffline] = useState(false)
+  const [modalOpen, setModalOpen] = useState(false)
+  
+  // Use ref to track modal state for interval callback without recreating interval
+  const modalOpenRef = useRef(false)
+  
+  // Sync ref with state
+  useEffect(() => {
+    modalOpenRef.current = modalOpen
+  }, [modalOpen])
 
   // Initialize data from localStorage
   useEffect(() => {
@@ -22,13 +31,36 @@ export const AppProvider = ({ children }) => {
     loadData()
   }, [])
 
-  const loadData = async () => {
-    setLoading(true)
+  // Auto-refresh data every 30 seconds for real-time updates
+  // (e.g., WhatsApp updates, backend recovery)
+  useEffect(() => {
+    const POLL_INTERVAL = 30000 // 30 seconds - lightweight polling
+    
+    const intervalId = setInterval(() => {
+      // Skip auto-refresh if a modal is open to prevent form data loss
+      if (modalOpenRef.current) {
+        console.log('⏸️ Auto-refresh skipped: Modal is open')
+        return
+      }
+      console.log('🔄 Auto-refresh: Checking for updates...')
+      loadData(true) // Pass silent flag to avoid showing loading spinner
+    }, POLL_INTERVAL)
+
+    // Cleanup interval on unmount
+    return () => clearInterval(intervalId)
+  }, [])
+
+  const loadData = async (silent = false) => {
+    // Don't show loading spinner for background refreshes
+    if (!silent) {
+      setLoading(true)
+    }
     
     let loadedTasks = []
     let loadedProjects = []
     let loadedEmployees = []
     let apiSuccess = false
+    const wasOffline = isOffline
     
     try {
       // Try to fetch employees from backend API
@@ -94,16 +126,28 @@ export const AppProvider = ({ children }) => {
 
     if (apiSuccess) {
       console.log("✅ All data synced from backend to localStorage")
+      
+      // Show recovery message if we were offline and now back online
+      if (wasOffline && !silent) {
+        showToast("✅ Back online - Data synced from server", "success")
+      }
+      
       setIsOffline(false)
     } else {
       setIsOffline(true)
-      if (!toast.show) {
+      
+      // Only show offline message for initial load or manual refresh
+      if (!toast.show && !silent) {
         showToast("⚠️ Offline Mode - Cannot save changes until reconnected", "warning")
       }
     }
 
     setTimerConfig(storageService.getTimerConfig())
-    setLoading(false)
+    
+    // Don't hide loading for silent background refreshes
+    if (!silent) {
+      setLoading(false)
+    }
   }
 
   // Calculate project stats from projects and tasks data
@@ -210,6 +254,41 @@ export const AppProvider = ({ children }) => {
     
     try {
       console.log(`🔄 Updating project ${id} via API...`, updates)
+      
+      // If assignedEmployees is being updated, check for removed employees
+      if (updates.assignedEmployees !== undefined) {
+        const currentProject = projects.find(p => p.id === id)
+        if (currentProject && currentProject.assignedEmployees) {
+          // Find employees that were removed
+          const removedEmployees = currentProject.assignedEmployees.filter(
+            empId => !updates.assignedEmployees.includes(empId)
+          )
+          
+          // If any employees were removed, unassign their tasks
+          if (removedEmployees.length > 0) {
+            console.log(`🔄 Unassigning tasks for removed employees:`, removedEmployees)
+            
+            // Get tasks for this project that are assigned to removed employees
+            const tasksToUnassign = tasks.filter(
+              task => task.projectId === id && removedEmployees.includes(task.assignedTo)
+            )
+            
+            // Update each task to unassigned status
+            for (const task of tasksToUnassign) {
+              try {
+                await apiService.updateTask(task.id, {
+                  assignedTo: null,
+                  status: STATUS.UNASSIGNED
+                })
+                console.log(`✅ Unassigned task ${task.id}`)
+              } catch (taskError) {
+                console.error(`❌ Failed to unassign task ${task.id}:`, taskError)
+              }
+            }
+          }
+        }
+      }
+      
       await apiService.updateProject(id, updates)
       await loadData() // Refresh all data
       showToast('Project updated successfully!', 'success')
@@ -354,6 +433,115 @@ export const AppProvider = ({ children }) => {
     return employees.filter(e => ids.includes(e.id))
   }
 
+  // Employee CRUD operations
+  const addEmployee = async (employeeData) => {
+    if (isOffline) {
+      showToast('Cannot add employee while offline', 'error')
+      return
+    }
+
+    try {
+      setLoading(true)
+      console.log('🔄 Creating employee:', employeeData.name)
+      
+      const newEmployee = await apiService.createEmployee(employeeData)
+      
+      // Update local state
+      setEmployees(prev => [...prev, newEmployee])
+      
+      // Sync with localStorage
+      const updatedEmployees = [...employees, newEmployee]
+      storageService.setEmployees(updatedEmployees)
+      
+      showToast(`Employee "${employeeData.name}" created successfully!`, 'success')
+      console.log('✅ Employee created:', newEmployee)
+      
+    } catch (error) {
+      console.error('❌ Error creating employee:', error)
+      showToast(error.message || 'Failed to create employee', 'error')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const updateEmployee = async (id, updates) => {
+    if (isOffline) {
+      showToast('Cannot update employee while offline', 'error')
+      return
+    }
+
+    try {
+      setLoading(true)
+      console.log(`🔄 Updating employee ${id}:`, updates)
+      
+      const updatedEmployee = await apiService.updateEmployee(id, updates)
+      
+      // Update local state
+      setEmployees(prev => prev.map(emp => 
+        emp.id === id ? updatedEmployee : emp
+      ))
+      
+      // Sync with localStorage
+      const updatedEmployees = employees.map(emp => 
+        emp.id === id ? updatedEmployee : emp
+      )
+      storageService.setEmployees(updatedEmployees)
+      
+      showToast(`Employee "${updatedEmployee.name}" updated successfully!`, 'success')
+      console.log('✅ Employee updated:', updatedEmployee)
+      
+    } catch (error) {
+      console.error('❌ Error updating employee:', error)
+      showToast(error.message || 'Failed to update employee', 'error')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const deleteEmployee = async (id) => {
+    if (isOffline) {
+      showToast('Cannot delete employee while offline', 'error')
+      return
+    }
+
+    try {
+      setLoading(true)
+      const employee = getEmployeeById(id)
+      console.log(`🔄 Deleting employee ${id}: ${employee?.name}`)
+      
+      await apiService.deleteEmployee(id)
+      
+      // Update local state
+      setEmployees(prev => prev.filter(emp => emp.id !== id))
+      
+      // Update tasks to remove deleted employee assignments
+      setTasks(prev => prev.map(task => 
+        task.assignedTo === id 
+          ? { ...task, assignedTo: null, status: STATUS.UNASSIGNED }
+          : task
+      ))
+      
+      // Sync with localStorage
+      const updatedEmployees = employees.filter(emp => emp.id !== id)
+      const updatedTasks = tasks.map(task => 
+        task.assignedTo === id 
+          ? { ...task, assignedTo: null, status: STATUS.UNASSIGNED }
+          : task
+      )
+      storageService.setEmployees(updatedEmployees)
+      storageService.setTasks(updatedTasks)
+      
+      showToast(`Employee "${employee?.name}" deleted successfully!`, 'success')
+      console.log('✅ Employee deleted and tasks updated')
+      
+    } catch (error) {
+      console.error('❌ Error deleting employee:', error)
+      showToast(error.message || 'Failed to delete employee', 'error')
+    } finally {
+      setLoading(false)
+    }
+  }
+
   // Timer operations
   const updateTimerConfig = (updates) => {
     const updated = storageService.updateTimerConfig(updates)
@@ -389,6 +577,8 @@ export const AppProvider = ({ children }) => {
     toast,
     loading,
     isOffline,
+    modalOpen,
+    setModalOpen,
     
     // Project methods
     addProject,
@@ -402,10 +592,14 @@ export const AppProvider = ({ children }) => {
     deleteTask,
     getTasksByProject,
     getTaskById,
+    getTasks: () => tasks,
     
     // Employee methods
     getEmployeeById,
     getEmployeesByIds,
+    addEmployee,
+    updateEmployee,
+    deleteEmployee,
     
     // Timer methods
     updateTimerConfig,
@@ -418,5 +612,7 @@ export const AppProvider = ({ children }) => {
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>
 }
+
+export { AppProvider }
 
 

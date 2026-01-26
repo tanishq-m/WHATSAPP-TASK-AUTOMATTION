@@ -1,11 +1,13 @@
 import { Link, useLocation } from 'react-router-dom'
-import { LayoutDashboard, Clock } from 'lucide-react'
+import { LayoutDashboard, Clock, WifiOff } from 'lucide-react'
 import { useState } from 'react'
 import TimerSettingsModal from '../tasks/TimerSettingsModal'
+import { useApp } from '../../context/useApp'
 
 const Navbar = () => {
   const location = useLocation()
   const [showTimerSettings, setShowTimerSettings] = useState(false)
+  const { isOffline } = useApp()
 
   return (
     <>
@@ -51,6 +53,14 @@ const Navbar = () => {
               >
                 <Clock className="w-5 h-5 text-gray-600" />
               </button>
+              
+              {/* Offline Indicator - Only show when offline */}
+              {isOffline && (
+                <div className="flex items-center gap-1.5 px-3 py-1.5 bg-red-50 border border-red-200 rounded-lg">
+                  <WifiOff className="w-4 h-4 text-red-600" />
+                  <span className="text-xs font-medium text-red-700">Offline</span>
+                </div>
+              )}
             </div>
           </div>
         </div>

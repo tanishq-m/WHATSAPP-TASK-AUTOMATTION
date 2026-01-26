@@ -1,11 +1,13 @@
 import { Link, useLocation } from 'react-router-dom'
-import { LayoutDashboard, Users, Clock } from 'lucide-react'
+import { LayoutDashboard, Users, Clock, WifiOff } from 'lucide-react'
 import { useState } from 'react'
 import TimerSettingsModal from '../tasks/TimerSettingsModal'
+import { useApp } from '../../context/useApp'
 
 const MobileNav = () => {
   const location = useLocation()
   const [showTimerSettings, setShowTimerSettings] = useState(false)
+  const { isOffline } = useApp()
 
   const navItems = [
     {
@@ -29,7 +31,15 @@ const MobileNav = () => {
 
   return (
     <>
-      <div className="mobile-nav md:hidden">
+      {/* Offline/Online status bar for mobile */}
+      {isOffline && (
+        <div className="md:hidden fixed top-0 left-0 right-0 z-50 bg-red-500 text-white px-4 py-2 flex items-center justify-center gap-2">
+          <WifiOff className="w-4 h-4" />
+          <span className="text-sm font-medium">Offline - Read Only</span>
+        </div>
+      )}
+      
+      <div className={`mobile-nav md:hidden ${isOffline ? 'mt-10' : ''}`}>
         <div className="flex items-center justify-around">
           {navItems.map((item) => {
             const Icon = item.icon

@@ -2,6 +2,10 @@
 
 A full-stack task management system with WhatsApp integration. Admins can manage projects, assign tasks to employees, and send task notifications via WhatsApp with interactive Yes/No buttons for status updates.
 
+
+cd backend
+python -m pytest test_api.py -v
+
 ## 🎯 Overview
 
 A complete task management solution with:

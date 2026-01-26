@@ -101,6 +101,102 @@ export const getEmployeeById = async (id) => {
 };
 
 /**
+ * Creates a new employee
+ * @param {Object} employeeData - Employee data to create
+ * @returns {Promise<Object>} Created employee object
+ */
+export const createEmployee = async (employeeData) => {
+  try {
+    console.log("🔄 API: Creating employee...", employeeData);
+    
+    const response = await fetch(`${API_BASE_URL}/employees`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(employeeData),
+    });
+    
+    const result = await response.json();
+    
+    if (response.ok && result.success) {
+      console.log("✅ API: Employee created successfully", result.data);
+      return toCamelCase(result.data);
+    } else {
+      // Parse error message from backend
+      const errorMessage = result.error || "Failed to create employee";
+      throw new Error(errorMessage);
+    }
+  } catch (error) {
+    console.error("❌ API: Error creating employee:", error);
+    throw error;
+  }
+};
+
+/**
+ * Updates an existing employee
+ * @param {number} id - Employee ID
+ * @param {Object} updates - Employee data to update
+ * @returns {Promise<Object>} Updated employee object
+ */
+export const updateEmployee = async (id, updates) => {
+  try {
+    console.log(`🔄 API: Updating employee ${id}...`, updates);
+    
+    const response = await fetch(`${API_BASE_URL}/employees/${id}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(updates),
+    });
+    
+    const result = await response.json();
+    
+    if (response.ok && result.success) {
+      console.log("✅ API: Employee updated successfully", result.data);
+      return toCamelCase(result.data);
+    } else {
+      // Parse error message from backend
+      const errorMessage = result.error || "Failed to update employee";
+      throw new Error(errorMessage);
+    }
+  } catch (error) {
+    console.error(`❌ API: Error updating employee ${id}:`, error);
+    throw error;
+  }
+};
+
+/**
+ * Deletes an employee
+ * @param {number} id - Employee ID
+ * @returns {Promise<Object>} Success response
+ */
+export const deleteEmployee = async (id) => {
+  try {
+    console.log(`🔄 API: Deleting employee ${id}...`);
+    
+    const response = await fetch(`${API_BASE_URL}/employees/${id}`, {
+      method: 'DELETE',
+    });
+    
+    const result = await response.json();
+    
+    if (response.ok && result.success) {
+      console.log("✅ API: Employee deleted successfully");
+      return result;
+    } else {
+      // Parse error message from backend
+      const errorMessage = result.error || "Failed to delete employee";
+      throw new Error(errorMessage);
+    }
+  } catch (error) {
+    console.error(`❌ API: Error deleting employee ${id}:`, error);
+    throw error;
+  }
+};
+
+/**
  * Fetches all projects from the backend API
  * @returns {Promise<Array>} Array of project objects
  */

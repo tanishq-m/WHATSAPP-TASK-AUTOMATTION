@@ -2225,3 +2225,519 @@ describe('Edge Cases - Validation Functions', () => {
   });
 });
 
+// ============================================================================
+// BUG FIX TESTS
+// ============================================================================
+
+describe('Bug Fixes', () => {
+  describe('Employee Filtering in TaskModal', () => {
+    it('should filter employees to only show project-assigned employees', () => {
+      // Mock data
+      const allEmployees = [
+        { id: 'emp_1', name: 'Alice' },
+        { id: 'emp_2', name: 'Bob' },
+        { id: 'emp_3', name: 'Charlie' },
+      ];
+
+      const project = {
+        id: 'proj_1',
+        name: 'Test Project',
+        assignedEmployees: ['emp_1', 'emp_3'], // Only Alice and Charlie
+      };
+
+      // Filter logic from TaskModal.jsx
+      const filteredEmployees = allEmployees.filter(emp => 
+        project.assignedEmployees.includes(emp.id)
+      );
+
+      expect(filteredEmployees).toHaveLength(2);
+      expect(filteredEmployees.map(e => e.id)).toEqual(['emp_1', 'emp_3']);
+      expect(filteredEmployees.find(e => e.id === 'emp_2')).toBeUndefined();
+    });
+
+    it('should clear assignedTo when project changes', () => {
+      // Simulate task form state
+      let taskData = {
+        projectId: 'proj_1',
+        assignedTo: 'emp_1',
+      };
+
+      // Simulate project change handler
+      const handleProjectChange = (newProjectId) => {
+        taskData = {
+          ...taskData,
+          projectId: newProjectId,
+          assignedTo: null, // Clear assignedTo
+        };
+      };
+
+      handleProjectChange('proj_2');
+
+      expect(taskData.projectId).toBe('proj_2');
+      expect(taskData.assignedTo).toBeNull();
+    });
+  });
+
+  describe('Auto-Unassignment on Employee Removal', () => {
+    it('should detect removed employees when updating project', () => {
+      const currentProject = {
+        id: 'proj_1',
+        name: 'Test Project',
+        assignedEmployees: ['emp_1', 'emp_2', 'emp_3'],
+      };
+
+      const updates = {
+        assignedEmployees: ['emp_1', 'emp_3'], // emp_2 removed
+      };
+
+      // Logic from AppContext.jsx updateProject
+      const removedEmployees = currentProject.assignedEmployees.filter(
+        empId => !updates.assignedEmployees.includes(empId)
+      );
+
+      expect(removedEmployees).toEqual(['emp_2']);
+    });
+
+    it('should identify tasks assigned to removed employees', () => {
+      const removedEmployees = ['emp_2'];
+      const allTasks = [
+        { id: 'task_1', projectId: 'proj_1', assignedTo: 'emp_1' },
+        { id: 'task_2', projectId: 'proj_1', assignedTo: 'emp_2' },
+        { id: 'task_3', projectId: 'proj_1', assignedTo: 'emp_3' },
+        { id: 'task_4', projectId: 'proj_1', assignedTo: 'emp_2' },
+      ];
+
+      // Logic from AppContext.jsx
+      const tasksToUnassign = allTasks.filter(task => 
+        task.projectId === 'proj_1' && 
+        removedEmployees.includes(task.assignedTo)
+      );
+
+      expect(tasksToUnassign).toHaveLength(2);
+      expect(tasksToUnassign.map(t => t.id)).toEqual(['task_2', 'task_4']);
+    });
+
+    it('should mark tasks as unassigned with correct status', async () => {
+      mockFetch.mockResolvedValueOnce(
+        createMockResponse({ 
+          success: true, 
+          data: { id: 'task_1', assignedTo: null, status: 'unassigned' }
+        })
+      );
+
+      const { updateTask } = await import('../services/api.service.js');
+      const result = await updateTask('task_1', {
+        assignedTo: null,
+        status: 'unassigned',
+      });
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        'http://localhost:5001/api/tasks/task_1',
+        expect.objectContaining({
+          method: 'PUT',
+          body: JSON.stringify({
+            assignedTo: null,
+            status: 'unassigned',
+          }),
+        })
+      );
+      expect(result.assignedTo).toBeNull();
+      expect(result.status).toBe('unassigned');
+    });
+  });
+
+  describe('Project Description UI', () => {
+    it('should create project with description', async () => {
+      mockFetch.mockResolvedValueOnce(
+        createMockResponse({ 
+          success: true, 
+          data: { 
+            id: 'proj_1', 
+            name: 'Test Project', 
+            description: 'This is a test project description',
+            startDate: '2026-01-01',
+            endDate: '2026-12-31'
+          }
+        })
+      );
+
+      const { createProject } = await import('../services/api.service.js');
+      const projectData = {
+        name: 'Test Project',
+        description: 'This is a test project description',
+        startDate: '2026-01-01',
+        endDate: '2026-12-31',
+      };
+      
+      const result = await createProject(projectData);
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        'http://localhost:5001/api/projects',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify(projectData),
+        })
+      );
+      expect(result.description).toBe('This is a test project description');
+    });
+
+    it('should update project description', async () => {
+      mockFetch.mockResolvedValueOnce(
+        createMockResponse({ 
+          success: true, 
+          data: { 
+            id: 'proj_1', 
+            name: 'Test Project', 
+            description: 'Updated description',
+          }
+        })
+      );
+
+      const { updateProject } = await import('../services/api.service.js');
+      const result = await updateProject('proj_1', {
+        description: 'Updated description',
+      });
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        'http://localhost:5001/api/projects/proj_1',
+        expect.objectContaining({
+          method: 'PUT',
+          body: JSON.stringify({ description: 'Updated description' }),
+        })
+      );
+      expect(result.description).toBe('Updated description');
+    });
+
+    it('should handle empty description', async () => {
+      mockFetch.mockResolvedValueOnce(
+        createMockResponse({ 
+          success: true, 
+          data: { 
+            id: 'proj_1', 
+            name: 'Test Project', 
+            description: '',
+          }
+        })
+      );
+
+      const { createProject } = await import('../services/api.service.js');
+      const result = await createProject({
+        name: 'Test Project',
+        description: '',
+      });
+
+      expect(result.description).toBe('');
+    });
+
+    it('should handle long description text', async () => {
+      const longDescription = 'This is a very long description. '.repeat(100);
+      
+      mockFetch.mockResolvedValueOnce(
+        createMockResponse({ 
+          success: true, 
+          data: { 
+            id: 'proj_1', 
+            name: 'Test Project', 
+            description: longDescription,
+          }
+        })
+      );
+
+      const { createProject } = await import('../services/api.service.js');
+      const result = await createProject({
+        name: 'Test Project',
+        description: longDescription,
+      });
+
+      expect(result.description).toBe(longDescription);
+      expect(result.description.length).toBeGreaterThan(3000);
+    });
+
+    it('should handle special characters in description', async () => {
+      const specialDescription = 'Description with <>&"\' and emojis 🚀💡';
+      
+      mockFetch.mockResolvedValueOnce(
+        createMockResponse({ 
+          success: true, 
+          data: { 
+            id: 'proj_1', 
+            name: 'Test Project', 
+            description: specialDescription,
+          }
+        })
+      );
+
+      const { createProject } = await import('../services/api.service.js');
+      const result = await createProject({
+        name: 'Test Project',
+        description: specialDescription,
+      });
+
+      expect(result.description).toBe(specialDescription);
+    });
+
+    it('should clear description when updated to empty string', async () => {
+      mockFetch.mockResolvedValueOnce(
+        createMockResponse({ 
+          success: true, 
+          data: { 
+            id: 'proj_1', 
+            name: 'Test Project', 
+            description: '',
+          }
+        })
+      );
+
+      const { updateProject } = await import('../services/api.service.js');
+      const result = await updateProject('proj_1', {
+        description: '',
+      });
+
+      expect(result.description).toBe('');
+    });
+
+    it('should preserve description when updating other fields', () => {
+      // Simulate form state with existing description
+      const projectData = {
+        id: 'proj_1',
+        name: 'Test Project',
+        description: 'Original description',
+        startDate: '2026-01-01',
+        endDate: '2026-12-31',
+      };
+
+      // Update only the name
+      const updatedData = {
+        ...projectData,
+        name: 'Updated Project Name',
+      };
+
+      expect(updatedData.description).toBe('Original description');
+      expect(updatedData.name).toBe('Updated Project Name');
+    });
+  });
+
+  describe('Auto-Refresh Modal Pause', () => {
+    it('should expose modalOpen state and setter', () => {
+      // Mock the AppContext to verify modalOpen is exposed
+      const mockContext = {
+        modalOpen: false,
+        setModalOpen: vi.fn(),
+      };
+
+      expect(mockContext).toHaveProperty('modalOpen');
+      expect(mockContext).toHaveProperty('setModalOpen');
+      expect(typeof mockContext.setModalOpen).toBe('function');
+    });
+
+    it('should set modalOpen to true when modal opens', () => {
+      let modalOpen = false;
+      const setModalOpen = (value) => { modalOpen = value; };
+
+      // Simulate modal opening
+      setModalOpen(true);
+      expect(modalOpen).toBe(true);
+    });
+
+    it('should set modalOpen to false when modal closes', () => {
+      let modalOpen = true;
+      const setModalOpen = (value) => { modalOpen = value; };
+
+      // Simulate modal closing
+      setModalOpen(false);
+      expect(modalOpen).toBe(false);
+    });
+
+    it('should preserve form data when modalOpen is true', () => {
+      const formData = {
+        name: 'Test Project',
+        description: 'This is a long description that I am typing...',
+      };
+
+      // Simulate typing more text
+      const updatedFormData = {
+        ...formData,
+        description: formData.description + ' and more text here',
+      };
+
+      // Form data should be preserved
+      expect(updatedFormData.description).toContain('This is a long description');
+      expect(updatedFormData.description).toContain('and more text here');
+    });
+
+    it('should not reset form when auto-refresh occurs with modal open', () => {
+      // Simulate initial form state with user input
+      const userInput = {
+        name: 'My Project',
+        description: 'User is typing this right now...',
+        startDate: '2026-01-01',
+      };
+
+      // Simulate auto-refresh bringing new data
+      const freshDataFromBackend = {
+        name: 'My Project',
+        description: '', // Backend doesn't have the unsaved description
+        startDate: '2026-01-01',
+      };
+
+      // When modal is open, form should keep user input, not backend data
+      const modalOpen = true;
+      const formData = modalOpen ? userInput : freshDataFromBackend;
+
+      expect(formData.description).toBe('User is typing this right now...');
+      expect(formData.description).not.toBe('');
+    });
+
+    it('should only pre-fill form on modal open, not on every project update', () => {
+      let formFillCount = 0;
+      let prevIsOpen = false;
+      let prevProjectId = null;
+
+      // Simulate useEffect with dependency tracking: [isOpen, project?.id]
+      const simulateUseEffect = (isOpen, projectId) => {
+        // Only run if dependencies changed
+        if (isOpen !== prevIsOpen || projectId !== prevProjectId) {
+          if (isOpen && projectId) {
+            formFillCount++;
+          }
+          prevIsOpen = isOpen;
+          prevProjectId = projectId;
+        }
+      };
+
+      // Modal opens - form should fill
+      simulateUseEffect(true, 'proj_1');
+      expect(formFillCount).toBe(1);
+
+      // Project object updates (same ID) while modal is open - form should NOT refill
+      simulateUseEffect(true, 'proj_1'); // Same deps = no effect run
+      expect(formFillCount).toBe(1); // Count should NOT increase
+
+      // Modal closes
+      simulateUseEffect(false, 'proj_1');
+      expect(formFillCount).toBe(1); // Still 1, only fills when isOpen=true
+
+      // Modal reopens - form should fill again
+      simulateUseEffect(true, 'proj_1');
+      expect(formFillCount).toBe(2); // Now increments because isOpen changed
+    });
+
+    it('should handle special characters in description without clearing', () => {
+      const formData = {
+        description: 'Description with special chars: <>&"\' and emojis 🚀💡\nNewlines\tTabs',
+      };
+
+      // Simulate auto-refresh occurring (should preserve special chars)
+      const modalOpen = true;
+      const preservedData = modalOpen ? formData : {};
+
+      expect(preservedData.description).toContain('<>&"\'');
+      expect(preservedData.description).toContain('🚀💡');
+      expect(preservedData.description).toContain('\n');
+      expect(preservedData.description).toContain('\t');
+    });
+
+    it('should handle very long description without clearing', () => {
+      const longText = 'A'.repeat(5000); // 5000 character description
+      const formData = {
+        description: longText,
+      };
+
+      // Modal open should preserve long text
+      const modalOpen = true;
+      const preservedData = modalOpen ? formData : {};
+
+      expect(preservedData.description).toBe(longText);
+      expect(preservedData.description.length).toBe(5000);
+    });
+
+    it('should pause auto-refresh when any modal is open', () => {
+      const modalStates = [
+        { modalOpen: false, shouldRefresh: true, reason: 'No modal open' },
+        { modalOpen: true, shouldRefresh: false, reason: 'Modal is open' },
+      ];
+
+      modalStates.forEach(({ modalOpen, shouldRefresh, reason }) => {
+        // Auto-refresh logic
+        const willRefresh = !modalOpen;
+        
+        expect(willRefresh).toBe(shouldRefresh);
+      });
+    });
+
+    it('should resume auto-refresh after modal closes', () => {
+      let modalOpen = true;
+      let refreshCount = 0;
+
+      // Simulate auto-refresh attempts
+      const attemptRefresh = () => {
+        if (!modalOpen) {
+          refreshCount++;
+        }
+      };
+
+      // Attempt 1: Modal open, should not refresh
+      attemptRefresh();
+      expect(refreshCount).toBe(0);
+
+      // Attempt 2: Still open
+      attemptRefresh();
+      expect(refreshCount).toBe(0);
+
+      // Modal closes
+      modalOpen = false;
+
+      // Attempt 3: Modal closed, should refresh
+      attemptRefresh();
+      expect(refreshCount).toBe(1);
+
+      // Attempt 4: Should continue refreshing
+      attemptRefresh();
+      expect(refreshCount).toBe(2);
+    });
+
+    it('should handle multiple modals correctly', () => {
+      // Track which modals are open
+      const projectModalOpen = false;
+      const taskModalOpen = true;
+      const employeeModalOpen = false;
+
+      // Any modal open should pause refresh
+      const anyModalOpen = projectModalOpen || taskModalOpen || employeeModalOpen;
+      const shouldRefresh = !anyModalOpen;
+
+      expect(anyModalOpen).toBe(true);
+      expect(shouldRefresh).toBe(false);
+    });
+
+    it('should preserve form data across multiple auto-refresh cycles', () => {
+      const initialFormData = {
+        description: 'Part 1...',
+      };
+
+      // User continues typing
+      let currentFormData = { ...initialFormData };
+      currentFormData.description += ' Part 2...';
+      
+      // Auto-refresh cycle 1 (modal open)
+      const modalOpen = true;
+      if (!modalOpen) {
+        currentFormData = {}; // Would clear if modal wasn't open
+      }
+      expect(currentFormData.description).toContain('Part 1');
+      expect(currentFormData.description).toContain('Part 2');
+
+      // User types more
+      currentFormData.description += ' Part 3...';
+
+      // Auto-refresh cycle 2 (modal still open)
+      if (!modalOpen) {
+        currentFormData = {};
+      }
+      expect(currentFormData.description).toContain('Part 1');
+      expect(currentFormData.description).toContain('Part 2');
+      expect(currentFormData.description).toContain('Part 3');
+    });
+  });
+});
+

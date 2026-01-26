@@ -1,7 +1,20 @@
-import { Phone, Briefcase, Eye } from 'lucide-react'
+import { Phone, Briefcase, Edit2, Trash2 } from 'lucide-react'
+import { useState } from 'react'
 import EmployeeAvatar from './EmployeeAvatar'
 
-const EmployeeCard = ({ employee }) => {
+const EmployeeCard = ({ employee, onEdit, onDelete }) => {
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+
+  const handleEdit = (e) => {
+    e.stopPropagation();
+    onEdit(employee);
+  };
+
+  const handleDelete = (e) => {
+    e.stopPropagation();
+    onDelete(employee);
+  };
+
   return (
     <div className="card-hover p-4">
       <div className="flex items-start gap-4">
@@ -14,10 +27,24 @@ const EmployeeCard = ({ employee }) => {
             <h3 className="font-semibold text-gray-900 truncate">
               {employee.name}
             </h3>
-            <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800 flex-shrink-0">
-              <Eye className="w-3 h-3" />
-              View Only
-            </span>
+            
+            {/* Action Buttons */}
+            <div className="flex items-center gap-1 flex-shrink-0">
+              <button
+                onClick={handleEdit}
+                className="p-2 hover:bg-gray-100 rounded-lg tap-target transition-colors"
+                title="Edit employee"
+              >
+                <Edit2 className="w-4 h-4 text-gray-500 hover:text-blue-600" />
+              </button>
+              <button
+                onClick={handleDelete}
+                className="p-2 hover:bg-red-50 rounded-lg tap-target transition-colors"
+                title="Delete employee"
+              >
+                <Trash2 className="w-4 h-4 text-gray-500 hover:text-red-600" />
+              </button>
+            </div>
           </div>
           
           <div className="space-y-1">

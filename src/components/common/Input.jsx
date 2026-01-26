@@ -5,20 +5,26 @@ const Input = ({
   onChange, 
   placeholder = '',
   error = '',
+  helperText = '',
   required = false,
   disabled = false,
   className = '',
+  id,
   ...props
 }) => {
+  // Generate a unique id if not provided but label exists
+  const inputId = id || (label ? `input-${label.toLowerCase().replace(/\s+/g, '-')}` : undefined)
+  
   return (
     <div className={`w-full ${className}`}>
       {label && (
-        <label className="label">
+        <label htmlFor={inputId} className="label">
           {label}
           {required && <span className="text-red-500 ml-1">*</span>}
         </label>
       )}
       <input
+        id={inputId}
         type={type}
         value={value}
         onChange={onChange}
@@ -30,6 +36,9 @@ const Input = ({
       />
       {error && (
         <p className="mt-1 text-sm text-red-600">{error}</p>
+      )}
+      {helperText && !error && (
+        <p className="mt-1 text-sm text-gray-500">{helperText}</p>
       )}
     </div>
   )
