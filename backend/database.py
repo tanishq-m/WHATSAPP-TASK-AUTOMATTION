@@ -79,6 +79,7 @@ def init_database():
             CREATE TABLE IF NOT EXISTS projects (
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
+                description TEXT,
                 start_date TEXT,
                 end_date TEXT,
                 color TEXT,
@@ -363,7 +364,7 @@ def get_all_projects():
             cursor = conn.cursor()
             
             cursor.execute("""
-                SELECT id, name, start_date, end_date, color, created_at
+                SELECT id, name, description, start_date, end_date, color, created_at
                 FROM projects
                 ORDER BY created_at DESC
             """)
@@ -405,7 +406,7 @@ def get_project_by_id(project_id):
             
             # Get project details
             cursor.execute("""
-                SELECT id, name, start_date, end_date, color, created_at
+                SELECT id, name, description, start_date, end_date, color, created_at
                 FROM projects
                 WHERE id = ?
             """, (project_id,))
@@ -464,11 +465,12 @@ def create_project(project_data):
             
             # Insert project
             cursor.execute("""
-                INSERT INTO projects (id, name, start_date, end_date, color)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO projects (id, name, description, start_date, end_date, color)
+                VALUES (?, ?, ?, ?, ?, ?)
             """, (
                 project_id,
                 project_data['name'],
+                project_data.get('description', ''),
                 project_data.get('startDate', ''),
                 project_data.get('endDate', ''),
                 project_data.get('color', '#3B82F6')
@@ -490,6 +492,7 @@ def create_project(project_data):
             response_data = {
                 'id': project_id,
                 'name': project_data['name'],
+                'description': project_data.get('description', ''),
                 'start_date': project_data.get('startDate', ''),
                 'end_date': project_data.get('endDate', ''),
                 'color': project_data.get('color', '#3B82F6'),
@@ -521,7 +524,7 @@ def update_project(project_id, project_data):
             
             # First, get the existing project to merge with updates
             cursor.execute("""
-                SELECT id, name, start_date, end_date, color, created_at
+                SELECT id, name, description, start_date, end_date, color, created_at
                 FROM projects WHERE id = ?
             """, (project_id,))
             existing = cursor.fetchone()
@@ -531,16 +534,17 @@ def update_project(project_id, project_data):
             
             # Merge existing data with updates
             updated_name = project_data.get('name') or existing[1]
-            updated_start = project_data.get('startDate') or existing[2]
-            updated_end = project_data.get('endDate') or existing[3]
-            updated_color = project_data.get('color') or existing[4]
+            updated_description = project_data.get('description', existing[2])  # Allow empty string
+            updated_start = project_data.get('startDate') or existing[3]
+            updated_end = project_data.get('endDate') or existing[4]
+            updated_color = project_data.get('color') or existing[5]
             
             # Update project
             cursor.execute("""
                 UPDATE projects
-                SET name = ?, start_date = ?, end_date = ?, color = ?
+                SET name = ?, description = ?, start_date = ?, end_date = ?, color = ?
                 WHERE id = ?
-            """, (updated_name, updated_start, updated_end, updated_color, project_id))
+            """, (updated_name, updated_description, updated_start, updated_end, updated_color, project_id))
             
             # Update project-employee relationships if provided
             # Accept both 'employeeIds' and 'assignedEmployees' (camelCase from frontend)
@@ -572,10 +576,11 @@ def update_project(project_id, project_data):
             updated_project = {
                 'id': project_id,
                 'name': updated_name,
+                'description': updated_description,
                 'start_date': updated_start,
                 'end_date': updated_end,
                 'color': updated_color,
-                'created_at': existing[5],
+                'created_at': existing[6],
                 'assigned_employees': assigned_employees
             }
             

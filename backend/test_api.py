@@ -1449,6 +1449,209 @@ class TestWhatsAppEdgeCases:
 
 
 # ============================================================================
+# PROJECT DESCRIPTION TESTS (NEW)
+# ============================================================================
+
+class TestProjectDescription:
+    """Tests for project description field functionality."""
+    
+    def test_create_project_with_description(self, client):
+        """POST /api/projects with description should save description."""
+        response = client.post('/api/projects',
+            data=json.dumps({
+                'name': 'Project with Description',
+                'description': 'This is a detailed project description with useful information.',
+                'startDate': '2026-01-01',
+                'endDate': '2026-12-31',
+            }),
+            content_type='application/json'
+        )
+        assert response.status_code == 201
+        
+        data = json.loads(response.data)
+        assert data['success'] == True
+        assert data['data']['description'] == 'This is a detailed project description with useful information.'
+        project_id = data['data']['id']
+        
+        # Verify description persists when fetching
+        response = client.get(f'/api/projects/{project_id}')
+        data = json.loads(response.data)
+        assert data['data']['description'] == 'This is a detailed project description with useful information.'
+    
+    def test_create_project_with_empty_description(self, client):
+        """POST /api/projects with empty description should accept empty string."""
+        response = client.post('/api/projects',
+            data=json.dumps({
+                'name': 'Project with Empty Description',
+                'description': '',
+                'startDate': '2026-01-01',
+            }),
+            content_type='application/json'
+        )
+        assert response.status_code == 201
+        
+        data = json.loads(response.data)
+        assert data['success'] == True
+        assert data['data']['description'] == ''
+    
+    def test_create_project_without_description_field(self, client):
+        """POST /api/projects without description field should default to empty string."""
+        response = client.post('/api/projects',
+            data=json.dumps({
+                'name': 'Project without Description Field',
+                'startDate': '2026-01-01',
+            }),
+            content_type='application/json'
+        )
+        assert response.status_code == 201
+        
+        data = json.loads(response.data)
+        assert data['success'] == True
+        assert data['data']['description'] == ''
+    
+    def test_update_project_description(self, client, sample_project):
+        """PUT /api/projects/<id> should update description."""
+        response = client.put(f'/api/projects/{sample_project}',
+            data=json.dumps({
+                'description': 'Updated description with new information'
+            }),
+            content_type='application/json'
+        )
+        assert response.status_code == 200
+        
+        data = json.loads(response.data)
+        assert data['success'] == True
+        assert data['data']['description'] == 'Updated description with new information'
+        
+        # Verify update persisted
+        response = client.get(f'/api/projects/{sample_project}')
+        data = json.loads(response.data)
+        assert data['data']['description'] == 'Updated description with new information'
+    
+    def test_update_project_clear_description(self, client, sample_project):
+        """PUT /api/projects/<id> should allow clearing description."""
+        # First verify project has a description
+        response = client.get(f'/api/projects/{sample_project}')
+        initial_data = json.loads(response.data)
+        assert initial_data['data']['description'] == 'Test Description'
+        
+        # Clear the description
+        response = client.put(f'/api/projects/{sample_project}',
+            data=json.dumps({
+                'description': ''
+            }),
+            content_type='application/json'
+        )
+        assert response.status_code == 200
+        
+        data = json.loads(response.data)
+        assert data['success'] == True
+        assert data['data']['description'] == ''
+    
+    def test_update_project_description_with_long_text(self, client, sample_project):
+        """PUT /api/projects/<id> should handle long descriptions."""
+        long_description = "This is a very long description. " * 100  # ~3000 chars
+        
+        response = client.put(f'/api/projects/{sample_project}',
+            data=json.dumps({
+                'description': long_description
+            }),
+            content_type='application/json'
+        )
+        assert response.status_code == 200
+        
+        data = json.loads(response.data)
+        assert data['success'] == True
+        assert data['data']['description'] == long_description
+        assert len(data['data']['description']) > 3000
+    
+    def test_update_project_description_with_special_characters(self, client, sample_project):
+        """PUT /api/projects/<id> should handle special characters in description."""
+        special_description = "Description with special chars: <>&\"'\\n\\t emoji 🚀 and unicode ñ"
+        
+        response = client.put(f'/api/projects/{sample_project}',
+            data=json.dumps({
+                'description': special_description
+            }),
+            content_type='application/json'
+        )
+        assert response.status_code == 200
+        
+        data = json.loads(response.data)
+        assert data['success'] == True
+        assert data['data']['description'] == special_description
+    
+    def test_get_all_projects_includes_description(self, client):
+        """GET /api/projects should include description in all projects."""
+        # Create multiple projects with different descriptions
+        client.post('/api/projects',
+            data=json.dumps({
+                'name': 'Project A',
+                'description': 'Description A',
+            }),
+            content_type='application/json'
+        )
+        
+        client.post('/api/projects',
+            data=json.dumps({
+                'name': 'Project B',
+                'description': 'Description B',
+            }),
+            content_type='application/json'
+        )
+        
+        client.post('/api/projects',
+            data=json.dumps({
+                'name': 'Project C',
+                'description': '',
+            }),
+            content_type='application/json'
+        )
+        
+        response = client.get('/api/projects')
+        assert response.status_code == 200
+        
+        data = json.loads(response.data)
+        assert data['success'] == True
+        assert len(data['data']) >= 3
+        
+        # Verify all projects have description field
+        for project in data['data']:
+            assert 'description' in project
+        
+        # Find our specific projects
+        project_a = next(p for p in data['data'] if p['name'] == 'Project A')
+        project_b = next(p for p in data['data'] if p['name'] == 'Project B')
+        project_c = next(p for p in data['data'] if p['name'] == 'Project C')
+        
+        assert project_a['description'] == 'Description A'
+        assert project_b['description'] == 'Description B'
+        assert project_c['description'] == ''
+    
+    def test_update_project_preserves_description_when_not_provided(self, client, sample_project):
+        """PUT /api/projects/<id> should preserve description if not in update payload."""
+        # Verify initial description
+        response = client.get(f'/api/projects/{sample_project}')
+        initial_data = json.loads(response.data)
+        assert initial_data['data']['description'] == 'Test Description'
+        
+        # Update only the name, not description
+        response = client.put(f'/api/projects/{sample_project}',
+            data=json.dumps({
+                'name': 'Updated Name Only'
+            }),
+            content_type='application/json'
+        )
+        assert response.status_code == 200
+        
+        # Verify description was preserved
+        response = client.get(f'/api/projects/{sample_project}')
+        data = json.loads(response.data)
+        assert data['data']['name'] == 'Updated Name Only'
+        assert data['data']['description'] == 'Test Description'  # Should be unchanged
+
+
+# ============================================================================
 # RUN TESTS
 # ============================================================================
 

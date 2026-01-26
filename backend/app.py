@@ -246,6 +246,7 @@ def create_project():
         employee_ids = data.get('employeeIds') or data.get('assignedEmployees', [])
         project_data = {
             'name': data['name'],
+            'description': data.get('description', ''),
             'startDate': data.get('startDate', ''),
             'endDate': data.get('endDate', ''),
             'color': data.get('color', '#3B82F6'),
