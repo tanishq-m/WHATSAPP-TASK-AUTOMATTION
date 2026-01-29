@@ -66,9 +66,9 @@ const AppProvider = ({ children }) => {
       // Try to fetch employees from backend API
       console.log("🔄 Loading employees from backend API...")
       const employeesData = await apiService.getEmployees()
-      loadedEmployees = employeesData
-      setEmployees(employeesData)
-      console.log("✅ Employees loaded from API:", employeesData.length)
+      loadedEmployees = employeesData || []
+      setEmployees(loadedEmployees)
+      console.log("✅ Employees loaded from API:", loadedEmployees.length)
       
       // Sync to localStorage
       storageService.setEmployees(employeesData)
@@ -85,12 +85,12 @@ const AppProvider = ({ children }) => {
     try {
       console.log("🔄 Loading tasks from backend API...")
       const tasksData = await apiService.getTasks()
-      loadedTasks = tasksData
-      setTasks(tasksData)
-      console.log("✅ Tasks loaded from API:", tasksData.length)
+      loadedTasks = tasksData || []
+      setTasks(loadedTasks)
+      console.log("✅ Tasks loaded from API:", loadedTasks.length)
       
       // Sync to localStorage
-      storageService.setTasks(tasksData)
+      storageService.setTasks(loadedTasks)
     } catch (error) {
       console.warn("⚠️ API failed, falling back to localStorage for tasks")
       console.error("Error:", error)
@@ -105,15 +105,15 @@ const AppProvider = ({ children }) => {
     try {
       console.log("🔄 Loading projects from backend API...")
       const projectsData = await apiService.getProjects()
-      loadedProjects = projectsData
+      loadedProjects = projectsData || []
       // Calculate stats for projects using loaded tasks
-      const projectsWithStats = calculateProjectStats(projectsData, loadedTasks)
+      const projectsWithStats = calculateProjectStats(loadedProjects, loadedTasks)
       setProjects(projectsWithStats)
-      console.log("✅ Projects loaded from API:", projectsData.length)
+      console.log("✅ Projects loaded from API:", loadedProjects.length)
       apiSuccess = true
       
       // Sync to localStorage
-      storageService.setProjects(projectsData)
+      storageService.setProjects(loadedProjects)
     } catch (error) {
       console.warn("⚠️ API failed, falling back to localStorage for projects")
       console.error("Error:", error)

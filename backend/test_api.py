@@ -23,7 +23,6 @@ from app import app
 import config
 import db
 
-
 # ============================================================================
 # FIXTURES - Setup and Teardown
 # ============================================================================
@@ -69,7 +68,6 @@ def client():
     os.close(db_fd)
     os.unlink(db_path)
 
-
 @pytest.fixture
 def sample_employee(client):
     """Create a sample employee for testing."""
@@ -83,7 +81,6 @@ def sample_employee(client):
     employee_id = cursor.lastrowid
     conn.close()
     return employee_id
-
 
 @pytest.fixture
 def sample_project(client):
@@ -100,7 +97,6 @@ def sample_project(client):
     )
     data = json.loads(response.data)
     return data['data']['id']
-
 
 @pytest.fixture
 def sample_task(client, sample_project, sample_employee):
@@ -120,7 +116,6 @@ def sample_task(client, sample_project, sample_employee):
     data = json.loads(response.data)
     return data['data']['task_id']
 
-
 # ============================================================================
 # HEALTH CHECK TESTS
 # ============================================================================
@@ -137,7 +132,6 @@ class TestHealthCheck:
         assert data['status'] == 'healthy'
         assert data['database'] == 'connected'
         assert 'timestamp' in data
-
 
 # ============================================================================
 # EMPLOYEE TESTS
@@ -197,7 +191,6 @@ class TestEmployees:
         
         data = json.loads(response.data)
         assert data['success'] == False
-
 
 # ============================================================================
 # PROJECT TESTS
@@ -474,7 +467,6 @@ class TestProjects:
         # New ID should be greater than deleted ID
         assert num2 > num1, f"Sequence decreased: {project_id_1} then {project_id_2}"
 
-
 # ============================================================================
 # TASK TESTS
 # ============================================================================
@@ -726,7 +718,6 @@ class TestTasks:
         new_num = int(new_task_id.split('_')[1])
         assert new_num > max_existing, f"New task ID ({new_task_id}) should be > max existing ({max_existing})"
 
-
 # ============================================================================
 # WHATSAPP INTEGRATION TESTS
 # ============================================================================
@@ -935,7 +926,6 @@ class TestWhatsAppIntegration:
         data = json.loads(response.data)
         assert data['data']['whatsapp_sent'] == True, "WhatsApp status should show sent=True"
 
-
 # ============================================================================
 # DATABASE TESTS
 # ============================================================================
@@ -1006,7 +996,6 @@ class TestDatabase:
         result = get_all_employees()
         assert result['success'] == True
 
-
 # ============================================================================
 # ERROR HANDLING TESTS
 # ============================================================================
@@ -1030,7 +1019,6 @@ class TestErrorHandling:
         )
         # Should return 400 or 500, not crash
         assert response.status_code in [400, 415, 500]
-
 
 # ============================================================================
 # INTEGRATION TESTS
@@ -1083,7 +1071,6 @@ class TestIntegration:
         created_project = next((p for p in list_data['data'] if p['id'] == project_id), None)
         assert created_project is not None
         assert created_project['name'] == 'Test ID Project'
-
 
 # ============================================================================
 # EDGE CASE TESTS
@@ -1415,7 +1402,6 @@ class TestEdgeCases:
         data = json.loads(response.data)
         assert data['data']['priority'] == 'high'
 
-
 # ============================================================================
 # WHATSAPP EDGE CASES
 # ============================================================================
@@ -1458,7 +1444,6 @@ class TestWhatsAppEdgeCases:
         assert response.status_code == 200
         data = json.loads(response.data)
         assert data['data']['whatsapp_sent'] == False
-
 
 # ============================================================================
 # PROJECT DESCRIPTION TESTS (NEW)
@@ -1661,7 +1646,6 @@ class TestProjectDescription:
         data = json.loads(response.data)
         assert data['data']['name'] == 'Updated Name Only'
         assert data['data']['description'] == 'Test Description'  # Should be unchanged
-
 
 # ============================================================================
 # EMPLOYEE CRUD TESTS (Merged from test_employee_crud.py)
@@ -2022,11 +2006,1250 @@ class TestEmployeeCRUD:
             created_employee = json.loads(response.data)['data']
             assert created_employee['name'] == name
 
+# ============================================================================
+# STAGE 1.1 TESTS - Activity Tables and CRUD
+# ============================================================================
+
+def test_activity_tables_exist(client):
+    """Test that activity tables were created by migration."""
+    conn = sqlite3.connect(config.DATABASE_PATH)
+    cursor = conn.cursor()
+    
+    # Check task_submission_tokens table
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='task_submission_tokens'")
+    assert cursor.fetchone() is not None, "task_submission_tokens table not found"
+    
+    # Check task_activities table
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='task_activities'")
+    assert cursor.fetchone() is not None, "task_activities table not found"
+    
+    # Check task_activity_attachments table
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='task_activity_attachments'")
+    assert cursor.fetchone() is not None, "task_activity_attachments table not found"
+    
+    # Check task_messages table
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='task_messages'")
+    assert cursor.fetchone() is not None, "task_messages table not found"
+    
+    conn.close()
+
+def test_create_submission_token(client, sample_employee):
+    """Test creating a submission token."""
+    import db.activities
+    
+    # Create a task first
+    task_data = {
+        'title': 'Test Task',
+        'projectId': 'test_project',
+        'assignedTo': sample_employee,
+        'status': 'in_progress'
+    }
+    task_result = db.tasks.create_task(task_data)
+    assert task_result['success']
+    task_id = task_result['data']['task_id']
+    
+    # Create submission token
+    result = db.activities.create_submission_token(task_id, sample_employee)
+    
+    assert result['success']
+    assert 'token' in result['data']
+    assert len(result['data']['token']) > 10  # Should be a decent length token
+
+def test_get_submission_by_token(client, sample_employee):
+    """Test retrieving submission by token."""
+    import db.activities
+    
+    # Create task and token
+    task_data = {
+        'title': 'Test Task for Submission',
+        'description': 'Test description',
+        'projectId': 'test_project',
+        'assignedTo': sample_employee,
+        'status': 'in_progress',
+        'dueDate': '2026-02-01',
+        'priority': 'high'
+    }
+    task_result = db.tasks.create_task(task_data)
+    task_id = task_result['data']['task_id']
+    
+    token_result = db.activities.create_submission_token(task_id, sample_employee)
+    token = token_result['data']['token']
+    
+    # Retrieve by token
+    result = db.activities.get_submission_by_token(token)
+    
+    assert result['success']
+    assert result['data']['task_id'] == task_id
+    assert result['data']['task_title'] == 'Test Task for Submission'
+    assert result['data']['employee_id'] == sample_employee
+    assert result['data']['status'] == 'pending'
+
+def test_submission_token_already_used(client, sample_employee):
+    """Test that used tokens cannot be retrieved."""
+    import db.activities
+    
+    # Create task and token
+    task_data = {'title': 'Test Task', 'projectId': 'test_project', 'assignedTo': sample_employee}
+    task_result = db.tasks.create_task(task_data)
+    task_id = task_result['data']['task_id']
+    
+    token_result = db.activities.create_submission_token(task_id, sample_employee)
+    token = token_result['data']['token']
+    
+    # Mark as submitted
+    mark_result = db.activities.mark_submission_complete(token)
+    assert mark_result['success']
+    
+    # Try to retrieve again - should fail
+    result = db.activities.get_submission_by_token(token)
+    assert not result['success']
+    assert 'already used' in result['error'].lower()
+
+def test_create_activity(client, sample_employee):
+    """Test creating an activity."""
+    import db.activities
+    
+    # Create task
+    task_data = {'title': 'Test Task', 'projectId': 'test_project', 'assignedTo': sample_employee}
+    task_result = db.tasks.create_task(task_data)
+    task_id = task_result['data']['task_id']
+    
+    # Create activity
+    activity_data = {
+        'task_id': task_id,
+        'author_type': 'employee',
+        'author_id': sample_employee,
+        'author_name': 'Test User',
+        'activity_type': 'comment',
+        'source': 'whatsapp_reply',
+        'message': 'This is a test comment'
+    }
+    result = db.activities.create_activity(activity_data)
+    
+    assert result['success']
+    assert result['data']['task_id'] == task_id
+    assert result['data']['message'] == 'This is a test comment'
+    assert result['data']['author_type'] == 'employee'
+
+def test_get_activities_by_task(client, sample_employee):
+    """Test retrieving all activities for a task."""
+    import db.activities
+    
+    # Create task
+    task_data = {'title': 'Test Task', 'projectId': 'test_project', 'assignedTo': sample_employee}
+    task_result = db.tasks.create_task(task_data)
+    task_id = task_result['data']['task_id']
+    
+    # Create multiple activities
+    for i in range(3):
+        activity_data = {
+            'task_id': task_id,
+            'author_type': 'employee',
+            'author_id': sample_employee,
+            'author_name': 'Test User',
+            'activity_type': 'comment',
+            'source': 'web_dashboard',
+            'message': f'Comment {i + 1}'
+        }
+        db.activities.create_activity(activity_data)
+    
+    # Retrieve activities
+    result = db.activities.get_activities_by_task(task_id)
+    
+    assert result['success']
+    assert len(result['data']) == 3
+    # Should be newest first
+    assert result['data'][0]['message'] == 'Comment 3'
+    assert result['data'][2]['message'] == 'Comment 1'
+
+def test_create_attachment(client, sample_employee):
+    """Test creating an attachment."""
+    import db.activities
+    
+    # Create task and activity
+    task_data = {'title': 'Test Task', 'projectId': 'test_project', 'assignedTo': sample_employee}
+    task_result = db.tasks.create_task(task_data)
+    task_id = task_result['data']['task_id']
+    
+    activity_data = {
+        'task_id': task_id,
+        'author_type': 'employee',
+        'author_id': sample_employee,
+        'author_name': 'Test User',
+        'activity_type': 'attachment',
+        'source': 'form_submission',
+        'message': 'Uploaded photo'
+    }
+    activity_result = db.activities.create_activity(activity_data)
+    activity_id = activity_result['data']['id']
+    
+    # Create attachment
+    attachment_data = {
+        'activity_id': activity_id,
+        'task_id': task_id,
+        'media_type': 'image',
+        'file_path': '/uploads/task_001/photo.jpg',
+        'filename': 'photo.jpg',
+        'content_type': 'image/jpeg',
+        'file_size': 245000
+    }
+    result = db.activities.create_attachment(attachment_data)
+    
+    assert result['success']
+    assert result['data']['activity_id'] == activity_id
+    assert result['data']['filename'] == 'photo.jpg'
+    assert result['data']['media_type'] == 'image'
+
+def test_activities_with_attachments(client, sample_employee):
+    """Test that get_activities_by_task includes attachments."""
+    import db.activities
+    
+    # Create task and activity with attachment
+    task_data = {'title': 'Test Task', 'projectId': 'test_project', 'assignedTo': sample_employee}
+    task_result = db.tasks.create_task(task_data)
+    task_id = task_result['data']['task_id']
+    
+    activity_data = {
+        'task_id': task_id,
+        'author_type': 'employee',
+        'author_id': sample_employee,
+        'author_name': 'Test User',
+        'activity_type': 'attachment',
+        'source': 'whatsapp_reply',
+        'message': 'Sent photo'
+    }
+    activity_result = db.activities.create_activity(activity_data)
+    activity_id = activity_result['data']['id']
+    
+    attachment_data = {
+        'activity_id': activity_id,
+        'task_id': task_id,
+        'media_type': 'image',
+        'file_path': '/uploads/task_001/photo.jpg',
+        'filename': 'photo.jpg',
+        'content_type': 'image/jpeg',
+        'file_size': 100000
+    }
+    db.activities.create_attachment(attachment_data)
+    
+    # Get activities
+    result = db.activities.get_activities_by_task(task_id)
+    
+    assert result['success']
+    assert len(result['data']) == 1
+    assert 'attachments' in result['data'][0]
+    assert len(result['data'][0]['attachments']) == 1
+    assert result['data'][0]['attachments'][0]['filename'] == 'photo.jpg'
+
+def test_task_message_mapping(client, sample_employee):
+    """Test WhatsApp message ID to task ID mapping."""
+    import db.activities
+    
+    # Create task
+    task_data = {'title': 'Test Task', 'projectId': 'test_project', 'assignedTo': sample_employee}
+    task_result = db.tasks.create_task(task_data)
+    task_id = task_result['data']['task_id']
+    
+    # Create task message mapping
+    whatsapp_msg_id = 'wamid.abc123xyz'
+    result = db.activities.create_task_message(task_id, whatsapp_msg_id, '+918005800336')
+    assert result['success']
+    
+    # Retrieve task by WhatsApp message ID
+    lookup_result = db.activities.get_task_by_whatsapp_message_id(whatsapp_msg_id)
+    assert lookup_result['success']
+    assert lookup_result['data']['task_id'] == task_id
+    assert lookup_result['data']['employee_phone'] == '+918005800336'
+
+def test_nonexistent_whatsapp_message_id(client):
+    """Test looking up non-existent WhatsApp message ID."""
+    import db.activities
+    
+    result = db.activities.get_task_by_whatsapp_message_id('nonexistent_id')
+    assert not result['success']
+    assert 'not found' in result['error'].lower()
 
 # ============================================================================
-# RUN TESTS
+# STAGE 1.2 TESTS - Submission Endpoints
 # ============================================================================
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v', '--tb=short'])
+def test_get_submission_valid_token(client, sample_employee):
+    """Test GET /api/submissions/<token> with valid token."""
+    import db.activities
+    
+    # Create task and token
+    task_data = {
+        'title': 'Task for Form Submission',
+        'description': 'Please complete this task',
+        'projectId': 'test_project',
+        'assignedTo': sample_employee,
+        'priority': 'high',
+        'dueDate': '2026-02-15'
+    }
+    task_result = db.tasks.create_task(task_data)
+    task_id = task_result['data']['task_id']
+    
+    token_result = db.activities.create_submission_token(task_id, sample_employee)
+    token = token_result['data']['token']
+    
+    # GET submission details
+    response = client.get(f'/api/submissions/{token}')
+    
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data['success']
+    assert data['data']['task_id'] == task_id
+    assert data['data']['task_title'] == 'Task for Form Submission'
+    assert data['data']['task_description'] == 'Please complete this task'
+    assert data['data']['task_priority'] == 'high'
+    assert data['data']['status'] == 'pending'
+
+def test_get_submission_invalid_token(client):
+    """Test GET /api/submissions/<token> with invalid token."""
+    response = client.get('/api/submissions/invalid_token_xyz')
+    
+    assert response.status_code in [400, 404]
+    data = response.get_json()
+    assert not data['success']
+    assert 'error' in data
+
+def test_get_submission_used_token(client, sample_employee):
+    """Test GET /api/submissions/<token> with already used token."""
+    import db.activities
+    
+    # Create task and token
+    task_data = {'title': 'Test Task', 'projectId': 'test_project', 'assignedTo': sample_employee}
+    task_result = db.tasks.create_task(task_data)
+    task_id = task_result['data']['task_id']
+    
+    token_result = db.activities.create_submission_token(task_id, sample_employee)
+    token = token_result['data']['token']
+    
+    # Mark as used
+    db.activities.mark_submission_complete(token)
+    
+    # Try to get submission
+    response = client.get(f'/api/submissions/{token}')
+    
+    assert response.status_code in [400, 410]
+    data = response.get_json()
+    assert not data['success']
+
+def test_submit_task_with_message(client, sample_employee):
+    """Test POST /api/submissions/<token> with message only."""
+    import db.activities
+    
+    # Create task and token
+    task_data = {'title': 'Test Task', 'projectId': 'test_project', 'assignedTo': sample_employee}
+    task_result = db.tasks.create_task(task_data)
+    task_id = task_result['data']['task_id']
+    
+    token_result = db.activities.create_submission_token(task_id, sample_employee)
+    token = token_result['data']['token']
+    
+    # Submit with message
+    response = client.post(f'/api/submissions/{token}', data={
+        'message': 'Task completed successfully!'
+    })
+    
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data['success']
+    assert data['data']['task_id'] == task_id
+    assert data['data']['message_posted']
+    assert data['data']['files_uploaded'] == 0
+    
+    # Verify activity was created
+    activities_result = db.activities.get_activities_by_task(task_id)
+    assert activities_result['success']
+    # Should have 2 activities: comment + system
+    activities = activities_result['data']
+    assert len(activities) >= 2
+    assert any(act['activity_type'] == 'comment' and 'completed successfully' in act['message'] for act in activities)
+
+def test_submit_task_with_file(client, sample_employee):
+    """Test POST /api/submissions/<token> with file upload."""
+    import db.activities
+    import io
+    
+    # Create task and token
+    task_data = {'title': 'Test Task', 'projectId': 'test_project', 'assignedTo': sample_employee}
+    task_result = db.tasks.create_task(task_data)
+    task_id = task_result['data']['task_id']
+    
+    token_result = db.activities.create_submission_token(task_id, sample_employee)
+    token = token_result['data']['token']
+    
+    # Create fake image file
+    file_data = io.BytesIO(b'fake image content')
+    file_data.name = 'test_image.jpg'
+    
+    # Submit with file
+    response = client.post(f'/api/submissions/{token}', data={
+        'message': 'Here is the photo',
+        'files': [(file_data, 'test_image.jpg')]
+    }, content_type='multipart/form-data')
+    
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data['success']
+    assert data['data']['message_posted']
+    assert data['data']['files_uploaded'] >= 1
+    assert 'test_image.jpg' in data['data']['uploaded_files']
+
+def test_submit_task_empty_submission(client, sample_employee):
+    """Test POST /api/submissions/<token> with no message or files."""
+    import db.activities
+    
+    # Create task and token
+    task_data = {'title': 'Test Task', 'projectId': 'test_project', 'assignedTo': sample_employee}
+    task_result = db.tasks.create_task(task_data)
+    task_id = task_result['data']['task_id']
+    
+    token_result = db.activities.create_submission_token(task_id, sample_employee)
+    token = token_result['data']['token']
+    
+    # Submit with empty message
+    response = client.post(f'/api/submissions/{token}', data={
+        'message': ''
+    })
+    
+    assert response.status_code == 400
+    data = response.get_json()
+    assert not data['success']
+    assert 'message' in data['error'].lower() and 'files' in data['error'].lower()
+
+def test_submit_task_invalid_token(client):
+    """Test POST /api/submissions/<token> with invalid token."""
+    response = client.post('/api/submissions/invalid_token', data={
+        'message': 'Test message'
+    })
+    
+    assert response.status_code in [400, 404]
+    data = response.get_json()
+    assert not data['success']
+
+def test_upload_file_endpoint(client, sample_employee):
+    """Test POST /api/submissions/<token>/upload endpoint."""
+    import db.activities
+    import io
+    
+    # Create task and token
+    task_data = {'title': 'Test Task', 'projectId': 'test_project', 'assignedTo': sample_employee}
+    task_result = db.tasks.create_task(task_data)
+    task_id = task_result['data']['task_id']
+    
+    token_result = db.activities.create_submission_token(task_id, sample_employee)
+    token = token_result['data']['token']
+    
+    # Create fake file
+    file_data = io.BytesIO(b'test document content')
+    
+    # Upload file
+    response = client.post(f'/api/submissions/{token}/upload', data={
+        'file': (file_data, 'test_doc.pdf')
+    }, content_type='multipart/form-data')
+    
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data['success']
+    assert 'filename' in data['data']
+    assert data['data']['filename'] == 'test_doc.pdf'
+    assert 'file_path' in data['data']
+
+def test_upload_file_no_file_provided(client, sample_employee):
+    """Test POST /api/submissions/<token>/upload with no file."""
+    import db.activities
+    
+    # Create task and token
+    task_data = {'title': 'Test Task', 'projectId': 'test_project', 'assignedTo': sample_employee}
+    task_result = db.tasks.create_task(task_data)
+    task_id = task_result['data']['task_id']
+    
+    token_result = db.activities.create_submission_token(task_id, sample_employee)
+    token = token_result['data']['token']
+    
+    # Upload without file
+    response = client.post(f'/api/submissions/{token}/upload', data={})
+    
+    assert response.status_code == 400
+    data = response.get_json()
+    assert not data['success']
+    assert 'no file' in data['error'].lower()
+
+def test_upload_file_invalid_extension(client, sample_employee):
+    """Test POST /api/submissions/<token>/upload with invalid file type."""
+    import db.activities
+    import io
+    
+    # Create task and token
+    task_data = {'title': 'Test Task', 'projectId': 'test_project', 'assignedTo': sample_employee}
+    task_result = db.tasks.create_task(task_data)
+    task_id = task_result['data']['task_id']
+    
+    token_result = db.activities.create_submission_token(task_id, sample_employee)
+    token = token_result['data']['token']
+    
+    # Create fake executable file
+    file_data = io.BytesIO(b'malicious content')
+    
+    # Try to upload .exe file
+    response = client.post(f'/api/submissions/{token}/upload', data={
+        'file': (file_data, 'malware.exe')
+    }, content_type='multipart/form-data')
+    
+    assert response.status_code == 400
+    data = response.get_json()
+    assert not data['success']
+    assert 'not allowed' in data['error'].lower()
+
+# ============================================================================
+# FILE DOWNLOAD TESTS - Downloading uploaded files
+# ============================================================================
+
+def test_download_file_success(client, sample_employee):
+    """Test successful file download."""
+    import db.activities
+    import os
+    import tempfile
+    
+    # Create a test task and activity with attachment
+    task_id = 'test_download_task'
+    
+    # Create a temporary test file
+    test_content = b'Test file content for download'
+    os.makedirs('uploads/test_download_task', exist_ok=True)
+    test_file_path = 'uploads/test_download_task/test_file.txt'
+    
+    with open(test_file_path, 'wb') as f:
+        f.write(test_content)
+    
+    try:
+        # Create activity record
+        with db.get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO task_activities 
+                (task_id, activity_type, message, author_id, author_name, author_type, source)
+                VALUES (?, 'attachment', 'Test file upload', ?, 'Test User', 'employee', 'form_submission')
+            """, (task_id, sample_employee))
+            
+            activity_id = cursor.lastrowid
+            
+            # Create attachment record
+            cursor.execute("""
+                INSERT INTO task_activity_attachments 
+                (activity_id, task_id, media_type, file_path, filename, content_type, file_size)
+                VALUES (?, ?, 'document', ?, 'test_file.txt', 'text/plain', ?)
+            """, (activity_id, task_id, test_file_path, len(test_content)))
+            
+            conn.commit()
+        
+        # Test download
+        response = client.get(f'/api/files/{test_file_path}')
+        
+        assert response.status_code == 200
+        assert response.data == test_content
+        assert 'attachment' in response.headers.get('Content-Disposition', '')
+        assert 'test_file.txt' in response.headers.get('Content-Disposition', '')
+        
+    finally:
+        # Cleanup
+        if os.path.exists(test_file_path):
+            os.remove(test_file_path)
+        if os.path.exists('uploads/test_download_task'):
+            os.rmdir('uploads/test_download_task')
+
+def test_download_file_not_found(client):
+    """Test download of non-existent file."""
+    response = client.get('/api/files/uploads/nonexistent/file.txt')
+    assert response.status_code == 404
+
+def test_download_file_security_path_traversal(client):
+    """Test that path traversal attacks are blocked."""
+    malicious_paths = [
+        '../../../etc/passwd',
+        '..\\..\\..\\windows\\system32\\config\\sam',
+        'uploads/../../../secret.txt'
+    ]
+    
+    for path in malicious_paths:
+        response = client.get(f'/api/files/{path}')
+        assert response.status_code in [400, 403, 404]  # Any of these is acceptable
+
+def test_download_file_not_in_database(client, sample_employee):
+    """Test download of file that exists on disk but not in database."""
+    import os
+    
+    # Create a file that's not in the database
+    test_file_path = 'uploads/unauthorized_file.txt'
+    os.makedirs('uploads', exist_ok=True)
+    
+    with open(test_file_path, 'w') as f:
+        f.write('Unauthorized content')
+    
+    try:
+        response = client.get(f'/api/files/{test_file_path}')
+        assert response.status_code in [403, 404]  # Should be denied
+        
+    finally:
+        # Cleanup
+        if os.path.exists(test_file_path):
+            os.remove(test_file_path)
+
+def test_download_image_file(client, sample_employee):
+    """Test downloading an image file with proper content type."""
+    import db.activities
+    import os
+    
+    # Create a test task and activity with image attachment
+    task_id = 'test_image_download'
+    
+    # Create a small test image file (1x1 pixel PNG)
+    png_data = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\xf8\x00\x00\x00\x01\x00\x01\x00\x00\x00\x07z\x03\x14\x00\x00\x00\x00IEND\xaeB`\x82'
+    
+    os.makedirs('uploads/test_image_download', exist_ok=True)
+    test_file_path = 'uploads/test_image_download/test.png'
+    
+    with open(test_file_path, 'wb') as f:
+        f.write(png_data)
+    
+    try:
+        # Create attachment record
+        with db.get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO task_activities 
+                (task_id, activity_type, message, author_id, author_name, author_type, source)
+                VALUES (?, 'attachment', 'Test image upload', ?, 'Test User', 'employee', 'whatsapp_reply')
+            """, (task_id, sample_employee))
+            
+            activity_id = cursor.lastrowid
+            
+            cursor.execute("""
+                INSERT INTO task_activity_attachments 
+                (activity_id, task_id, media_type, file_path, filename, content_type, file_size)
+                VALUES (?, ?, 'image', ?, 'test.png', 'image/png', ?)
+            """, (activity_id, task_id, test_file_path, len(png_data)))
+            
+            conn.commit()
+        
+        # Test download
+        response = client.get(f'/api/files/{test_file_path}')
+        
+        assert response.status_code == 200
+        assert response.data == png_data
+        assert response.headers.get('Content-Type') == 'image/png'
+        assert 'test.png' in response.headers.get('Content-Disposition', '')
+        
+    finally:
+        # Cleanup
+        if os.path.exists(test_file_path):
+            os.remove(test_file_path)
+        if os.path.exists('uploads/test_image_download'):
+            os.rmdir('uploads/test_image_download')
+
+# ============================================================================
+# STATUS UPDATE FEATURE TESTS - Form-based status changes
+# ============================================================================
+
+def test_submit_task_with_status_update(client, sample_employee):
+    """Test submitting form with status update."""
+    import db.activities
+    
+    # Create task with initial status
+    task_data = {
+        'title': 'Test Status Task',
+        'projectId': 'test_project',
+        'assignedTo': sample_employee,
+        'status': 'in_progress'
+    }
+    task_result = db.tasks.create_task(task_data)
+    task_id = task_result['data']['task_id']
+    
+    # Create submission token
+    token_result = db.activities.create_submission_token(task_id, sample_employee)
+    token = token_result['data']['token']
+    
+    # Submit with status change
+    response = client.post(f'/api/submissions/{token}', data={
+        'message': 'Task completed successfully',
+        'status': 'completed'
+    })
+    
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data['success']
+    assert data['data']['status_updated'] is True
+    assert data['data']['new_status'] == 'completed'
+    
+    # Verify task status was updated
+    task = db.tasks.get_task_by_id(task_id)
+    assert task['success']
+    assert task['data']['status'] == 'completed'
+    
+    # Verify status_change activity was created
+    activities = db.activities.get_activities_by_task(task_id)
+    assert activities['success']
+    status_activities = [a for a in activities['data'] if a['activity_type'] == 'status_change']
+    assert len(status_activities) == 1
+    assert 'completed' in status_activities[0]['message'].lower()
+
+def test_submit_task_status_only(client, sample_employee):
+    """Test submitting form with only status update (no message or files)."""
+    import db.activities
+    
+    # Create task
+    task_data = {
+        'title': 'Status Only Task',
+        'projectId': 'test_project',
+        'assignedTo': sample_employee,
+        'status': 'in_progress'
+    }
+    task_result = db.tasks.create_task(task_data)
+    task_id = task_result['data']['task_id']
+    
+    token_result = db.activities.create_submission_token(task_id, sample_employee)
+    token = token_result['data']['token']
+    
+    # Submit with only status change
+    response = client.post(f'/api/submissions/{token}', data={
+        'status': 'pending_verification'
+    })
+    
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data['success']
+    assert data['data']['status_updated'] is True
+    assert data['data']['message_posted'] is False
+    assert data['data']['files_uploaded'] == 0
+
+def test_submit_task_invalid_status(client, sample_employee):
+    """Test submitting form with invalid status value."""
+    import db.activities
+    
+    # Create task
+    task_data = {
+        'title': 'Invalid Status Task',
+        'projectId': 'test_project',
+        'assignedTo': sample_employee
+    }
+    task_result = db.tasks.create_task(task_data)
+    task_id = task_result['data']['task_id']
+    
+    token_result = db.activities.create_submission_token(task_id, sample_employee)
+    token = token_result['data']['token']
+    
+    # Submit with invalid status
+    response = client.post(f'/api/submissions/{token}', data={
+        'message': 'Test message',
+        'status': 'invalid_status_value'
+    })
+    
+    assert response.status_code == 400
+    data = response.get_json()
+    assert not data['success']
+    assert 'invalid status' in data['error'].lower()
+
+def test_submit_task_status_override_button(client, sample_employee):
+    """Test that form submission can override button-set status."""
+    import db.activities
+    
+    # Create task with status set by button click
+    task_data = {
+        'title': 'Override Test Task',
+        'projectId': 'test_project',
+        'assignedTo': sample_employee,
+        'status': 'completed'  # Simulating button click set this
+    }
+    task_result = db.tasks.create_task(task_data)
+    task_id = task_result['data']['task_id']
+    
+    token_result = db.activities.create_submission_token(task_id, sample_employee)
+    token = token_result['data']['token']
+    
+    # Override with form submission
+    response = client.post(f'/api/submissions/{token}', data={
+        'message': 'Actually not done, need more time',
+        'status': 'in_progress'
+    })
+    
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data['success']
+    assert data['data']['new_status'] == 'in_progress'
+    
+    # Verify task status was changed back
+    task = db.tasks.get_task_by_id(task_id)
+    assert task['success']
+    assert task['data']['status'] == 'in_progress'
+
+def test_submit_task_multiple_status_changes(client, sample_employee):
+    """Test multiple form submissions with different status changes."""
+    import db.activities
+    
+    # Create task
+    task_data = {
+        'title': 'Multi-status Task',
+        'projectId': 'test_project',
+        'assignedTo': sample_employee,
+        'status': 'in_progress'
+    }
+    task_result = db.tasks.create_task(task_data)
+    task_id = task_result['data']['task_id']
+    
+    # First submission - blocked
+    token1_result = db.activities.create_submission_token(task_id, sample_employee)
+    token1 = token1_result['data']['token']
+    
+    response1 = client.post(f'/api/submissions/{token1}', data={
+        'message': 'Found a blocker',
+        'status': 'pending_verification'
+    })
+    assert response1.status_code == 200
+    
+    # Second submission - completed
+    token2_result = db.activities.create_submission_token(task_id, sample_employee)
+    token2 = token2_result['data']['token']
+    
+    response2 = client.post(f'/api/submissions/{token2}', data={
+        'message': 'Blocker resolved, task done',
+        'status': 'completed'
+    })
+    assert response2.status_code == 200
+    
+    # Verify final status
+    task = db.tasks.get_task_by_id(task_id)
+    assert task['success']
+    assert task['data']['status'] == 'completed'
+    
+    # Verify both status change activities exist
+    activities = db.activities.get_activities_by_task(task_id)
+    assert activities['success']
+    status_activities = [a for a in activities['data'] if a['activity_type'] == 'status_change']
+    assert len(status_activities) == 2
+
+def test_submit_task_without_status_keeps_current(client, sample_employee):
+    """Test that submitting without status field keeps current task status."""
+    import db.activities
+    
+    # Create task with specific status
+    task_data = {
+        'title': 'Keep Status Task',
+        'projectId': 'test_project',
+        'assignedTo': sample_employee,
+        'status': 'pending_verification'
+    }
+    task_result = db.tasks.create_task(task_data)
+    task_id = task_result['data']['task_id']
+    
+    token_result = db.activities.create_submission_token(task_id, sample_employee)
+    token = token_result['data']['token']
+    
+    # Submit without status field
+    response = client.post(f'/api/submissions/{token}', data={
+        'message': 'Adding some comments'
+    })
+    
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data['success']
+    assert data['data']['status_updated'] is False
+    
+    # Verify status unchanged
+    task = db.tasks.get_task_by_id(task_id)
+    assert task['success']
+    assert task['data']['status'] == 'pending_verification'
+
+# ============================================================================
+# STAGE 1.4 TESTS - WhatsApp Integration Layer
+# ============================================================================
+
+def test_get_employee_by_phone(client, sample_employee):
+    """Test getting employee by phone number."""
+    import db.employees
+    
+    # Get employee by ID to get their phone
+    employee_result = db.employees.get_employee_by_id(sample_employee)
+    assert employee_result['success']
+    phone = employee_result['data']['phone']
+    
+    # Get by phone
+    result = db.employees.get_employee_by_phone(phone)
+    
+    assert result['success']
+    assert result['data']['id'] == sample_employee
+    assert result['data']['phone'] == phone
+
+def test_get_employee_by_phone_normalized(client):
+    """Test getting employee by phone with/without + prefix."""
+    import db.employees
+    
+    # Create employee with + prefix
+    employee_data = {
+        'name': 'Phone Test User',
+        'phone': '+919876543210',
+        'role': 'Developer'
+    }
+    create_result = db.employees.create_employee(employee_data)
+    assert create_result['success']
+    
+    # Get by phone without +
+    result1 = db.employees.get_employee_by_phone('919876543210')
+    assert result1['success']
+    assert result1['data']['phone'] == '+919876543210'
+    
+    # Get by phone with +
+    result2 = db.employees.get_employee_by_phone('+919876543210')
+    assert result2['success']
+    assert result2['data']['phone'] == '+919876543210'
+
+def test_whatsapp_text_reply_to_task(client, sample_employee):
+    """Test webhook handler for text reply to a task message."""
+    import db.activities
+    
+    # Create task
+    task_data = {'title': 'Test Task', 'projectId': 'test_project', 'assignedTo': sample_employee}
+    task_result = db.tasks.create_task(task_data)
+    task_id = task_result['data']['task_id']
+    
+    # Get employee phone
+    employee_result = db.employees.get_employee_by_id(sample_employee)
+    employee_phone = employee_result['data']['phone']
+    
+    # Create task message mapping
+    whatsapp_msg_id = 'wamid.test123456'
+    db.activities.create_task_message(task_id, whatsapp_msg_id, employee_phone)
+    
+    # Simulate WhatsApp text reply webhook
+    webhook_payload = {
+        'message': {
+            'from': employee_phone,
+            'type': 'text',
+            'text': {
+                'body': 'Task is 80% complete, will finish by tomorrow'
+            },
+            'context': {
+                'id': whatsapp_msg_id  # Reply to tracked message
+            }
+        }
+    }
+    
+    response = client.post(
+        '/api/webhook/whatsapp',
+        json=webhook_payload,
+        headers={'X-Webhook-Event': 'whatsapp.message.received'}
+    )
+    
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data['status'] == 'processed'
+    assert data['task_id'] == task_id
+    assert data['activity_created']
+    
+    # Verify activity was created
+    activities_result = db.activities.get_activities_by_task(task_id)
+    assert activities_result['success']
+    activities = activities_result['data']
+    assert len(activities) >= 1
+    assert any('80% complete' in act['message'] for act in activities)
+    assert any(act['source'] == 'whatsapp_reply' for act in activities)
+
+def test_whatsapp_untracked_text_message(client, sample_employee):
+    """Test webhook handler for untracked text message."""
+    import db.employees
+    
+    # Get employee phone
+    employee_result = db.employees.get_employee_by_id(sample_employee)
+    employee_phone = employee_result['data']['phone']
+    
+    # Simulate WhatsApp text message with no context (not a reply)
+    webhook_payload = {
+        'message': {
+            'from': employee_phone,
+            'type': 'text',
+            'text': {
+                'body': 'Hello, how are you?'
+            }
+        }
+    }
+    
+    response = client.post(
+        '/api/webhook/whatsapp',
+        json=webhook_payload,
+        headers={'X-Webhook-Event': 'whatsapp.message.received'}
+    )
+    
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data['status'] == 'ignored'
+
+def test_whatsapp_help_request(client, sample_employee):
+    """Test webhook handler for help/form request."""
+    import db.employees
+    
+    # Get employee phone
+    employee_result = db.employees.get_employee_by_id(sample_employee)
+    employee_phone = employee_result['data']['phone']
+    
+    # Simulate WhatsApp help request
+    webhook_payload = {
+        'message': {
+            'from': employee_phone,
+            'type': 'text',
+            'text': {
+                'body': 'help'
+            }
+        }
+    }
+    
+    response = client.post(
+        '/api/webhook/whatsapp',
+        json=webhook_payload,
+        headers={'X-Webhook-Event': 'whatsapp.message.received'}
+    )
+    
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data['status'] == 'processed'
+    assert data.get('help_sent')
+
+def test_whatsapp_form_request_in_reply(client, sample_employee):
+    """Test requesting form URL via WhatsApp reply."""
+    import db.activities
+    
+    # Create task
+    task_data = {'title': 'Test Task', 'projectId': 'test_project', 'assignedTo': sample_employee}
+    task_result = db.tasks.create_task(task_data)
+    task_id = task_result['data']['task_id']
+    
+    # Get employee info
+    employee_result = db.employees.get_employee_by_id(sample_employee)
+    employee_phone = employee_result['data']['phone']
+    
+    # Create task message mapping
+    whatsapp_msg_id = 'wamid.formrequest123'
+    db.activities.create_task_message(task_id, whatsapp_msg_id, employee_phone)
+    
+    # Simulate WhatsApp reply requesting form
+    webhook_payload = {
+        'message': {
+            'from': employee_phone,
+            'type': 'text',
+            'text': {
+                'body': 'Please send me the form link'
+            },
+            'context': {
+                'id': whatsapp_msg_id
+            }
+        }
+    }
+    
+    response = client.post(
+        '/api/webhook/whatsapp',
+        json=webhook_payload,
+        headers={'X-Webhook-Event': 'whatsapp.message.received'}
+    )
+    
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data['status'] == 'processed'
+    assert data['task_id'] == task_id
+    
+    # Verify activity created
+    activities_result = db.activities.get_activities_by_task(task_id)
+    assert activities_result['success']
+    activities = activities_result['data']
+    assert any('form link' in act['message'].lower() for act in activities)
+    
+    # Verify submission token was created
+    # We can't easily verify the WhatsApp message was sent in tests,
+    # but we can verify the activity and token creation logic worked
+
+def test_whatsapp_reply_creates_correct_activity_type(client, sample_employee):
+    """Test that WhatsApp replies create activities with correct metadata."""
+    import db.activities
+    
+    # Create task
+    task_data = {'title': 'Metadata Test', 'projectId': 'test_project', 'assignedTo': sample_employee}
+    task_result = db.tasks.create_task(task_data)
+    task_id = task_result['data']['task_id']
+    
+    # Get employee
+    employee_result = db.employees.get_employee_by_id(sample_employee)
+    employee = employee_result['data']
+    
+    # Create message mapping
+    msg_id = 'wamid.metadata_test'
+    db.activities.create_task_message(task_id, msg_id, employee['phone'])
+    
+    # Send reply
+    webhook_payload = {
+        'message': {
+            'from': employee['phone'],
+            'type': 'text',
+            'text': {'body': 'Progress update'},
+            'context': {'id': msg_id}
+        }
+    }
+    
+    response = client.post(
+        '/api/webhook/whatsapp',
+        json=webhook_payload,
+        headers={'X-Webhook-Event': 'whatsapp.message.received'}
+    )
+    
+    assert response.status_code == 200
+    
+    # Check activity metadata
+    activities_result = db.activities.get_activities_by_task(task_id)
+    activity = activities_result['data'][0]
+    
+    assert activity['author_type'] == 'employee'
+    assert activity['author_id'] == sample_employee
+    assert activity['author_name'] == employee['name']
+    assert activity['activity_type'] == 'comment'
+    assert activity['source'] == 'whatsapp_reply'
+    assert activity['message'] == 'Progress update'
+
+# ============================================================================
+# STAGE 1.5 TESTS - Dashboard Activity Feed
+# ============================================================================
+
+def test_get_task_activities_success(client, sample_employee):
+    """Test GET /api/tasks/<task_id>/activities - successful retrieval."""
+    import db.activities
+    
+    # Create task
+    task_data = {
+        'title': 'Activity Feed Test',
+        'projectId': 'test_project',
+        'assignedTo': sample_employee
+    }
+    task_result = db.tasks.create_task(task_data)
+    task_id = task_result['data']['task_id']
+    
+    # Create multiple activities
+    activities_data = [
+        {
+            'task_id': task_id,
+            'author_type': 'employee',
+            'author_id': sample_employee,
+            'author_name': 'Test Employee',
+            'activity_type': 'comment',
+            'source': 'whatsapp_reply',
+            'message': 'First comment'
+        },
+        {
+            'task_id': task_id,
+            'author_type': 'employee',
+            'author_id': sample_employee,
+            'author_name': 'Test Employee',
+            'activity_type': 'status_change',
+            'source': 'form_submission',
+            'message': 'Changed status to Completed'
+        },
+        {
+            'task_id': task_id,
+            'author_type': 'system',
+            'author_id': None,
+            'author_name': 'System',
+            'activity_type': 'system',
+            'source': 'system',
+            'message': 'Task assigned'
+        }
+    ]
+    
+    for activity_data in activities_data:
+        db.activities.create_activity(activity_data)
+    
+    # Fetch activities
+    response = client.get(f'/api/tasks/{task_id}/activities')
+    
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data['success']
+    assert len(data['data']) >= 3
+    
+    # Verify activities are sorted chronologically
+    timestamps = [a['created_at'] for a in data['data']]
+    assert timestamps == sorted(timestamps)
+
+def test_get_task_activities_not_found(client):
+    """Test GET /api/tasks/<task_id>/activities - task not found."""
+    response = client.get('/api/tasks/nonexistent_task/activities')
+    
+    assert response.status_code == 404
+    data = response.get_json()
+    assert not data['success']
+    assert 'not found' in data['error'].lower()
+
+def test_get_task_activities_with_attachments(client, sample_employee):
+    """Test activities endpoint includes attachment data."""
+    import db.activities
+    import io
+    
+    # Create task
+    task_data = {
+        'title': 'Attachment Test',
+        'projectId': 'test_project',
+        'assignedTo': sample_employee
+    }
+    task_result = db.tasks.create_task(task_data)
+    task_id = task_result['data']['task_id']
+    
+    # Create submission token and submit with file
+    token_result = db.activities.create_submission_token(task_id, sample_employee)
+    token = token_result['data']['token']
+    
+    file_data = io.BytesIO(b'test file content')
+    response = client.post(f'/api/submissions/{token}', data={
+        'message': 'Submission with file',
+        'files': (file_data, 'test_document.pdf')
+    }, content_type='multipart/form-data')
+    
+    assert response.status_code == 200
+    
+    # Fetch activities
+    activities_response = client.get(f'/api/tasks/{task_id}/activities')
+    
+    assert activities_response.status_code == 200
+    data = activities_response.get_json()
+    assert data['success']
+    
+    # Find attachment activity
+    attachment_activities = [a for a in data['data'] if a['activity_type'] == 'attachment']
+    assert len(attachment_activities) > 0
+    
+    # Verify attachment data is included
+    attachment_activity = attachment_activities[0]
+    assert 'attachments' in attachment_activity
+    assert len(attachment_activity['attachments']) > 0
+    assert 'filename' in attachment_activity['attachments'][0]
+    assert 'file_size' in attachment_activity['attachments'][0]
+
+def test_get_task_activities_empty(client, sample_employee):
+    """Test activities endpoint for task with no activities."""
+    # Create task without any activities
+    task_data = {
+        'title': 'Empty Activity Task',
+        'projectId': 'test_project',
+        'assignedTo': sample_employee
+    }
+    task_result = db.tasks.create_task(task_data)
+    task_id = task_result['data']['task_id']
+    
+    # Fetch activities
+    response = client.get(f'/api/tasks/{task_id}/activities')
+    
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data['success']
+    assert isinstance(data['data'], list)
+    # May have system activities from task creation
+    assert len(data['data']) >= 0
+
+# ============================================================================
+# MEDIA HANDLING & FORM SUBMISSION TESTS (NEW FEATURES)
+# ============================================================================
 

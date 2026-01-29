@@ -26,6 +26,9 @@ PORT = 5001  # Changed from 5000 (macOS Control Center uses 5000)
 # Enable/disable debug mode (auto-reload, detailed errors)
 DEBUG = True
 
+# Frontend URL for generating submission links
+FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:5173')
+
 
 # ============================================================================
 # DATABASE CONFIGURATION

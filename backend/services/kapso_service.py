@@ -58,10 +58,18 @@ def send_text_message(phone_number, message_text):
         
         # Check if request was successful
         if response.status_code == 200 or response.status_code == 201:
+            response_data = response.json()
             print(f"✅ WhatsApp message sent successfully to {phone_number}")
+            
+            # Extract message ID from response for reply threading
+            message_id = None
+            if "messages" in response_data and len(response_data["messages"]) > 0:
+                message_id = response_data["messages"][0].get("id")
+            
             return {
                 "success": True,
-                "data": response.json()
+                "data": response_data,
+                "message_id": message_id
             }
         else:
             error_msg = response.text
@@ -236,10 +244,18 @@ def send_interactive_buttons(phone_number, body_text, buttons, header_text=None,
         
         # Check if request was successful
         if response.status_code in [200, 201]:
+            response_data = response.json()
             print(f"✅ Interactive buttons sent successfully to {phone_number}")
+            
+            # Extract message ID from response for reply threading
+            message_id = None
+            if "messages" in response_data and len(response_data["messages"]) > 0:
+                message_id = response_data["messages"][0].get("id")
+            
             return {
                 "success": True,
-                "data": response.json()
+                "data": response_data,
+                "message_id": message_id
             }
         else:
             error_msg = response.text

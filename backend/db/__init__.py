@@ -121,8 +121,40 @@ def init_database():
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_employee_id ON tasks(employee_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_project_id ON tasks(project_id)")
         
+        # Run migration for activity tables (Stage 1.1)
+        _run_activity_migration(cursor)
+        
         conn.commit()
         print("✅ Database initialized successfully")
+
+
+def _run_activity_migration(cursor):
+    """
+    Run migration to add activity tables for rich task communication.
+    This is idempotent and safe to run multiple times.
+    """
+    import os
+    
+    migration_file = os.path.join(
+        os.path.dirname(__file__), 
+        'migrations', 
+        '20260127_add_activity_tables.sql'
+    )
+    
+    if os.path.exists(migration_file):
+        with open(migration_file, 'r') as f:
+            migration_sql = f.read()
+        
+        # Execute the entire migration as one script
+        # SQLite can handle multiple statements separated by semicolons
+        try:
+            cursor.executescript(migration_sql)
+            print("✅ Activity tables migration applied")
+        except Exception as e:
+            print(f"❌ Error executing migration: {e}")
+            raise
+    else:
+        print("⚠️ Migration file not found, skipping activity tables")
 
 
 # Export the core functions that other modules need

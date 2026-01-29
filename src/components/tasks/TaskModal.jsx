@@ -5,6 +5,7 @@ import Input from '../common/Input'
 import Select from '../common/Select'
 import DatePicker from '../common/DatePicker'
 import Button from '../common/Button'
+import ActivityFeed from './ActivityFeed'
 import { useApp } from '../../context/useApp'
 import { generateId } from '../../utils/helpers'
 import { PRIORITY, STATUS, PRIORITY_LABELS, STATUS_LABELS } from '../../utils/constants'
@@ -232,6 +233,13 @@ const TaskModal = ({ isOpen, onClose, task = null, projectId = null }) => {
             ))}
           </div>
         </div>
+
+        {/* Activity Feed - Only show for existing tasks */}
+        {isEditing && task && (
+          <div className="pt-4 border-t border-gray-200">
+            <ActivityFeed taskId={task.id || task.taskId} />
+          </div>
+        )}
 
         <div className="flex flex-col gap-3 pt-4 border-t border-gray-200">
           {isEditing && (

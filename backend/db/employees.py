@@ -76,6 +76,43 @@ def get_employee_by_id(employee_id):
         return {"success": False, "error": str(e)}
 
 
+def get_employee_by_phone(phone):
+    """
+    Get a single employee by phone number.
+    
+    Args:
+        phone (str): Employee phone number (with or without + prefix)
+        
+    Returns:
+        dict: Success response with employee data or error
+    """
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Normalize phone (remove + if present)
+            normalized_phone = phone.replace('+', '')
+            
+            cursor.execute("""
+                SELECT id, name, phone, role, created_at
+                FROM employees
+                WHERE REPLACE(phone, '+', '') = ?
+            """, (normalized_phone,))
+            
+            employee = cursor.fetchone()
+            
+            if employee:
+                print(f"✅ Retrieved employee {dict(employee)['name']} by phone")
+                return {"success": True, "data": dict(employee)}
+            else:
+                print(f"❌ Employee not found for phone: {phone}")
+                return {"success": False, "error": "Employee not found"}
+        
+    except Exception as e:
+        print(f"❌ Error getting employee by phone: {e}")
+        return {"success": False, "error": str(e)}
+
+
 def create_employee(employee_data):
     """
     Create a new employee in the database.

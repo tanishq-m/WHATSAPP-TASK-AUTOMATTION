@@ -5,6 +5,7 @@ Handles all task-related API endpoints.
 
 from flask import Blueprint, jsonify, request
 import db.tasks
+import db.activities
 
 # Create Blueprint
 tasks_bp = Blueprint('tasks', __name__)
@@ -219,3 +220,42 @@ def delete_task(task_id):
             "success": False,
             "error": "Failed to delete task"
         }), 500
+
+
+@tasks_bp.route('/tasks/<task_id>/activities', methods=['GET'])
+def get_task_activities(task_id):
+    """
+    Get all activities for a task.
+    
+    Returns activities in chronological order with attachments.
+    
+    Returns:
+        JSON response with list of activities
+    """
+    try:
+        print(f"📥 GET /api/tasks/{task_id}/activities - Fetching activities")
+        
+        # Verify task exists
+        task_result = db.tasks.get_task_by_id(task_id)
+        if not task_result['success']:
+            return jsonify({
+                "success": False,
+                "error": "Task not found"
+            }), 404
+        
+        # Get activities
+        activities_result = db.activities.get_activities_by_task(task_id)
+        
+        if not activities_result['success']:
+            return jsonify(activities_result), 500
+        
+        print(f"✅ Found {len(activities_result['data'])} activities for task {task_id}")
+        return jsonify(activities_result), 200
+        
+    except Exception as e:
+        print(f"❌ Error in get_task_activities endpoint: {e}")
+        return jsonify({
+            "success": False,
+            "error": "Failed to fetch activities"
+        }), 500
+

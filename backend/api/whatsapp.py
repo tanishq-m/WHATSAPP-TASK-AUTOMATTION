@@ -6,6 +6,7 @@ Handles all WhatsApp-related API endpoints for sending messages.
 from flask import Blueprint, jsonify, request
 import db.tasks
 import db.employees
+import db.activities
 import services.kapso_service as kapso_service
 
 # Create Blueprint
@@ -85,6 +86,16 @@ def send_task_to_whatsapp(task_id):
         if result['success']:
             # Update task to mark WhatsApp as sent (use camelCase for db.tasks.update_task)
             db.tasks.update_task(task_id, {'whatsappSent': 1})
+            
+            # Store WhatsApp message ID for reply threading
+            whatsapp_msg_id = result.get('message_id')
+            if whatsapp_msg_id:
+                db.activities.create_task_message(
+                    task_id,
+                    whatsapp_msg_id,
+                    employee['phone']
+                )
+                print(f"✅ Stored message ID for reply threading: {whatsapp_msg_id}")
             
             print(f"✅ Task {task_id} sent to WhatsApp successfully")
             return jsonify({
@@ -176,6 +187,17 @@ def send_task_with_buttons(task_id):
         if result['success']:
             # Update task to mark WhatsApp as sent
             db.tasks.update_task(task_id, {'whatsappSent': 1})
+            
+            # Store WhatsApp message ID for reply threading
+            whatsapp_msg_id = result.get('message_id')
+            if whatsapp_msg_id:
+                db.activities.create_task_message(
+                    task_id,
+                    whatsapp_msg_id,
+                    employee['phone'],
+                    'eod_check'
+                )
+                print(f"✅ Stored message ID for reply threading: {whatsapp_msg_id}")
             
             print(f"✅ Task {task_id} sent with buttons to WhatsApp successfully")
             return jsonify({
