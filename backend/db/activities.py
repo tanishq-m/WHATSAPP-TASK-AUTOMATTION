@@ -162,6 +162,26 @@ def create_activity(activity_data):
         dict: Success response with created activity or error
     """
     try:
+        from . import convert_to_iso8601
+        from services import deduplication_service
+        
+        # Check for duplicate activity (only for non-system activities with messages)
+        if activity_data.get('message') and activity_data.get('author_id'):
+            is_duplicate = deduplication_service.is_activity_duplicate(
+                task_id=activity_data.get('task_id'),
+                author_id=activity_data.get('author_id'),
+                message=activity_data.get('message'),
+                author_type=activity_data.get('author_type', 'employee')
+            )
+            
+            if is_duplicate:
+                print(f"⚠️ Skipping duplicate activity creation for task {activity_data.get('task_id')}")
+                return {
+                    'success': False,
+                    'error': 'Duplicate activity detected',
+                    'duplicate': True
+                }
+        
         with get_db_connection() as conn:
             cursor = conn.cursor()
             
@@ -191,6 +211,10 @@ def create_activity(activity_data):
             cursor.execute("SELECT * FROM task_activities WHERE id = ?", (activity_id,))
             activity = dict(cursor.fetchone())
             
+            # Convert timestamps to ISO 8601 format
+            activity['created_at'] = convert_to_iso8601(activity.get('created_at'))
+            activity['updated_at'] = convert_to_iso8601(activity.get('updated_at'))
+            
             print(f"✅ Created activity {activity_id} for task {activity_data.get('task_id')}")
             return {"success": True, "data": activity}
         
@@ -210,6 +234,8 @@ def get_activities_by_task(task_id):
         dict: Success response with list of activities or error
     """
     try:
+        from . import convert_to_iso8601
+        
         with get_db_connection() as conn:
             cursor = conn.cursor()
             
@@ -221,15 +247,24 @@ def get_activities_by_task(task_id):
             
             activities = [dict(row) for row in cursor.fetchall()]
             
-            # Fetch attachments for each activity
+            # Fetch attachments for each activity and convert timestamps
             for activity in activities:
+                # Convert activity timestamp to ISO 8601 with UTC timezone
+                activity['created_at'] = convert_to_iso8601(activity.get('created_at'))
+                
                 cursor.execute("""
                     SELECT * FROM task_activity_attachments
                     WHERE activity_id = ?
                     ORDER BY created_at
                 """, (activity['id'],))
                 
-                activity['attachments'] = [dict(row) for row in cursor.fetchall()]
+                attachments = [dict(row) for row in cursor.fetchall()]
+                
+                # Convert attachment timestamps
+                for attachment in attachments:
+                    attachment['created_at'] = convert_to_iso8601(attachment.get('created_at'))
+                
+                activity['attachments'] = attachments
             
             print(f"✅ Retrieved {len(activities)} activities for task {task_id}")
             return {"success": True, "data": activities}
@@ -256,19 +291,22 @@ def create_attachment(attachment_data):
             - filename (str): Original filename
             - content_type (str): MIME type
             - file_size (int): File size in bytes
+            - file_hash (str, optional): SHA-256 hash of file for deduplication
             
     Returns:
         dict: Success response with created attachment or error
     """
     try:
+        from . import convert_to_iso8601
+        
         with get_db_connection() as conn:
             cursor = conn.cursor()
             
             cursor.execute("""
                 INSERT INTO task_activity_attachments (
                     activity_id, task_id, media_type, file_path,
-                    filename, content_type, file_size, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    filename, content_type, file_size, file_hash, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             """, (
                 attachment_data.get('activity_id'),
                 attachment_data.get('task_id'),
@@ -276,7 +314,8 @@ def create_attachment(attachment_data):
                 attachment_data.get('file_path'),
                 attachment_data.get('filename'),
                 attachment_data.get('content_type'),
-                attachment_data.get('file_size')
+                attachment_data.get('file_size'),
+                attachment_data.get('file_hash')
             ))
             
             attachment_id = cursor.lastrowid
@@ -285,6 +324,9 @@ def create_attachment(attachment_data):
             # Fetch created attachment
             cursor.execute("SELECT * FROM task_activity_attachments WHERE id = ?", (attachment_id,))
             attachment = dict(cursor.fetchone())
+            
+            # Convert timestamp to ISO 8601 format
+            attachment['created_at'] = convert_to_iso8601(attachment.get('created_at'))
             
             print(f"✅ Created attachment {attachment_id} for activity {attachment_data.get('activity_id')}")
             return {"success": True, "data": attachment}
@@ -362,4 +404,38 @@ def get_task_by_whatsapp_message_id(whatsapp_message_id):
         
     except Exception as e:
         print(f"❌ Error getting task by message ID: {e}")
+        return {"success": False, "error": str(e)}
+
+
+def update_activity_mention_notification(activity_id, mentioned_employee_id, whatsapp_message_id):
+    """
+    Update activity with mention notification status.
+    
+    Args:
+        activity_id (int): Activity ID
+        mentioned_employee_id (int): Employee ID who was mentioned
+        whatsapp_message_id (str): WhatsApp message ID of notification
+        
+    Returns:
+        dict: Success response or error
+    """
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                UPDATE task_activities
+                SET mentioned_user_id = ?,
+                    mention_notification_sent = 1,
+                    mention_notification_message_id = ?
+                WHERE id = ?
+            """, (mentioned_employee_id, whatsapp_message_id, activity_id))
+            
+            conn.commit()
+            
+            print(f"✅ Updated activity {activity_id} with mention notification")
+            return {"success": True}
+        
+    except Exception as e:
+        print(f"❌ Error updating mention notification: {e}")
         return {"success": False, "error": str(e)}

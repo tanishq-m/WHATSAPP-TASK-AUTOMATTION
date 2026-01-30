@@ -5,10 +5,13 @@ Handles incoming webhook requests from external services (e.g., Kapso for WhatsA
 
 from flask import Blueprint, jsonify, request
 from datetime import datetime
+import db
 import db.tasks
 import db.employees
 import db.activities
 import services.kapso_service as kapso_service
+import services.deduplication_service as dedup_service
+import services.clarification_service as clarification_service
 import config
 
 # Create Blueprint
@@ -26,8 +29,8 @@ def handle_media_reply(message_data, phone_number):
     """
     try:
         # Get message context (reply information)
-        context = message_data.get('context', {})
-        replied_to_msg_id = context.get('id')
+        context = message_data.get('context')
+        replied_to_msg_id = context.get('id') if context else None
         message_type = message_data.get('type', '')
         
         print(f"📎 Media message type: {message_type}")
@@ -72,6 +75,10 @@ def handle_media_reply(message_data, phone_number):
                 
                 employee = employee_result['data']
                 
+                # Initialize file tracking variables
+                file_hash = None
+                file_is_duplicate = False
+                
                 # Download media file
                 try:
                     import requests
@@ -96,6 +103,17 @@ def handle_media_reply(message_data, phone_number):
                     
                     file_size = len(response.content)
                     print(f"✅ Downloaded media: {file_path} ({file_size} bytes)")
+                    
+                    # Compute file hash for deduplication (Stage 2.5)
+                    file_hash = dedup_service.compute_file_hash(file_path)
+                    
+                    # Check for duplicate file
+                    if dedup_service.is_file_duplicate(file_hash, task_id):
+                        print(f"⚠️ Duplicate file detected (hash: {file_hash[:16]}...)")
+                        # Keep the file but mark it as duplicate in response
+                        file_is_duplicate = True
+                    else:
+                        file_is_duplicate = False
                     
                 except Exception as e:
                     print(f"❌ Failed to download media: {e}")
@@ -134,28 +152,130 @@ def handle_media_reply(message_data, phone_number):
                         'file_path': file_path,
                         'filename': filename,
                         'content_type': content_type,
-                        'file_size': file_size
+                        'file_size': file_size,
+                        'file_hash': file_hash  # Add file hash for deduplication
                     }
                     
                     attachment_result = db.activities.create_attachment(attachment_data)
                     
                     if attachment_result['success']:
                         print(f"✅ Created attachment record for {filename}")
+                        
+                        if file_is_duplicate:
+                            print(f"ℹ️ File is a duplicate but was saved")
+                        
+                        # Infer read status from media reply (Stage 2.2 - Phase 2)
+                        import services.message_status_service as message_status_service
+                        infer_result = message_status_service.infer_read_from_reply(replied_to_msg_id)
+                        if infer_result['success']:
+                            print(f"✅ Inferred read status from media reply")
+                        
                         return {
                             'status': 'processed',
                             'task_id': task_id,
                             'media_saved': True,
-                            'filename': filename
+                            'filename': filename,
+                            'is_duplicate': file_is_duplicate
                         }
                     else:
                         print(f"❌ Failed to create attachment record: {attachment_result.get('error')}")
                 else:
                     print(f"❌ Failed to create activity: {activity_result.get('error')}")
             else:
-                print(f"ℹ️ Media message not linked to tracked task")
-                # Could implement unlinked media handling here
+                print(f"ℹ️ Media message not linked to tracked task - initiating clarification")
+                
+                # Get employee by phone
+                employee_result = db.employees.get_employee_by_phone(phone_number)
+                if not employee_result['success']:
+                    print(f"⚠️ Unknown phone number {phone_number}, ignoring media")
+                    return None
+                
+                employee = employee_result['data']
+                
+                # Download media to pending folder
+                download_result = clarification_service.download_media_to_pending(
+                    media_url=media_url,
+                    employee_id=employee['id'],
+                    filename=filename,
+                    content_type=content_type
+                )
+                
+                if not download_result['success']:
+                    print(f"❌ Failed to download pending media: {download_result.get('error')}")
+                    return None
+                
+                # Create pending clarification and send buttons
+                clarification_result = clarification_service.create_pending_clarification(
+                    employee_id=employee['id'],
+                    phone=phone_number,
+                    media_url=media_url,
+                    media_type=message_type,
+                    caption=caption,
+                    temp_file_path=download_result['file_path']
+                )
+                
+                if clarification_result['success']:
+                    print(f"✅ Created clarification {clarification_result.get('clarification_id')}")
+                    return {
+                        'status': 'clarification_requested',
+                        'clarification_id': clarification_result.get('clarification_id'),
+                        'tasks_shown': clarification_result.get('tasks_shown', 0)
+                    }
+                else:
+                    print(f"❌ Failed to create clarification: {clarification_result.get('error')}")
+                    return None
         else:
-            print(f"ℹ️ Media message without reply context")
+            print(f"ℹ️ Media message without reply context - initiating clarification")
+            
+            # Same clarification logic for media without context
+            employee_result = db.employees.get_employee_by_phone(phone_number)
+            if not employee_result['success']:
+                print(f"⚠️ Unknown phone number {phone_number}, ignoring media")
+                return None
+            
+            employee = employee_result['data']
+            
+            # Get Kapso media info
+            kapso_data = message_data.get('kapso', {})
+            media_url = kapso_data.get('media_url')
+            media_data = kapso_data.get('media_data', {})
+            message_type = message_data.get('type', 'document')
+            media_info = message_data.get(message_type, {})
+            filename = media_data.get('filename', f'media_{message_data.get("id", "unknown")}')
+            content_type = media_data.get('content_type', f'{message_type}/unknown')
+            caption = media_info.get('caption', '')
+            
+            if not media_url:
+                print("❌ No media URL for clarification")
+                return None
+            
+            # Download and create clarification
+            download_result = clarification_service.download_media_to_pending(
+                media_url=media_url,
+                employee_id=employee['id'],
+                filename=filename,
+                content_type=content_type
+            )
+            
+            if not download_result['success']:
+                return None
+            
+            clarification_result = clarification_service.create_pending_clarification(
+                employee_id=employee['id'],
+                phone=phone_number,
+                media_url=media_url,
+                media_type=message_type,
+                caption=caption,
+                temp_file_path=download_result['file_path']
+            )
+            
+            if clarification_result['success']:
+                return {
+                    'status': 'clarification_requested',
+                    'clarification_id': clarification_result.get('clarification_id')
+                }
+            
+            return None
         
         return None
         
@@ -174,8 +294,8 @@ def handle_text_reply(message_data, phone_number):
     """
     try:
         # Get message context (reply information)
-        context = message_data.get('context', {})
-        replied_to_msg_id = context.get('id')  # WhatsApp message ID being replied to
+        context = message_data.get('context')
+        replied_to_msg_id = context.get('id') if context else None
         
         # Get message text
         text_data = message_data.get('text', {})
@@ -187,6 +307,37 @@ def handle_text_reply(message_data, phone_number):
         
         print(f"💬 Text message: {message_body}")
         print(f"🔗 Reply to message ID: {replied_to_msg_id}")
+        
+        # If not a reply, check if it's a help request first
+        if not replied_to_msg_id:
+            message_lower = message_body.lower()
+            if any(keyword in message_lower for keyword in ['help', 'task', 'form', 'submit']):
+                # Send general help message
+                help_msg = (
+                    "👋 Hello! I'm your task manager assistant.\n\n"
+                    "To update a task:\n"
+                    "1️⃣ Reply directly to the task message I sent you\n"
+                    "2️⃣ Type 'form' or 'link' to get a submission form\n\n"
+                    "Or just reply with your update!"
+                )
+                clean_phone = phone_number.replace('+', '')
+                kapso_service.send_text_message(clean_phone, help_msg)
+                print(f"✅ Sent help message to {clean_phone}")
+                
+                return {
+                    'status': 'processed',
+                    'help_sent': True
+                }
+            
+            # Otherwise send guidance message
+            print("ℹ️ Text message not a reply to any task - sending guidance")
+            clean_phone = phone_number.replace('+', '')
+            kapso_service.send_text_message(
+                clean_phone,
+                "💬 To add a comment to a task, please reply directly to any task message.\n\n"
+                "Or you can select a task from the list of your active tasks by sending any media (image/document)."
+            )
+            return None
         
         # Check if this is a reply to a tracked task message
         if replied_to_msg_id:
@@ -222,6 +373,12 @@ def handle_text_reply(message_data, phone_number):
                 
                 if activity_result['success']:
                     print(f"✅ Created activity from WhatsApp reply")
+                    
+                    # Infer read status from reply (Stage 2.2 - Phase 2)
+                    import services.message_status_service as message_status_service
+                    infer_result = message_status_service.infer_read_from_reply(replied_to_msg_id)
+                    if infer_result['success']:
+                        print(f"✅ Inferred read status from reply")
                     
                     # Check if user is requesting form
                     message_lower = message_body.lower()
@@ -259,26 +416,6 @@ def handle_text_reply(message_data, phone_number):
             else:
                 print(f"ℹ️ Message not linked to a tracked task")
         
-        # Check if this is an unthreaded message requesting help
-        message_lower = message_body.lower()
-        if any(keyword in message_lower for keyword in ['help', 'task', 'form', 'submit']):
-            # Send general help message
-            help_msg = (
-                "👋 Hello! I'm your task manager assistant.\n\n"
-                "To update a task:\n"
-                "1️⃣ Reply directly to the task message I sent you\n"
-                "2️⃣ Type 'form' or 'link' to get a submission form\n\n"
-                "Or just reply with your update!"
-            )
-            clean_phone = phone_number.replace('+', '')
-            kapso_service.send_text_message(clean_phone, help_msg)
-            print(f"✅ Sent help message to {clean_phone}")
-            
-            return {
-                'status': 'processed',
-                'help_sent': True
-            }
-        
         # Untracked text message
         print(f"ℹ️ Untracked text message, ignoring")
         return None
@@ -288,6 +425,123 @@ def handle_text_reply(message_data, phone_number):
         import traceback
         traceback.print_exc()
         return None
+
+
+def handle_status_webhook(payload):
+    """
+    Handle status webhooks from Kapso (delivery, read, failed).
+    
+    Webhook format:
+    {
+        "statuses": [
+            {
+                "id": "wamid.xxx",
+                "status": "delivered|read|failed",
+                "timestamp": "1234567890",
+                "recipient_id": "918005800336",
+                "errors": [...]  # Only for failed status
+            }
+        ]
+    }
+    """
+    try:
+        import services.message_status_service as message_status_service
+        
+        statuses = payload.get('statuses', [])
+        
+        print(f"\n📊 STATUS WEBHOOK RECEIVED")
+        print(f"📦 Statuses count: {len(statuses)}")
+        
+        results = []
+        
+        for status_item in statuses:
+            whatsapp_message_id = status_item.get('id')
+            status = status_item.get('status')
+            timestamp = status_item.get('timestamp')
+            recipient_id = status_item.get('recipient_id')
+            errors = status_item.get('errors')
+            
+            print(f"\n📨 Message ID: {whatsapp_message_id}")
+            print(f"📊 Status: {status}")
+            print(f"📅 Timestamp: {timestamp}")
+            print(f"👤 Recipient: {recipient_id}")
+            
+            if not whatsapp_message_id or not status:
+                print(f"⚠️ Invalid status item, missing required fields")
+                results.append({
+                    'status': 'error',
+                    'error': 'Missing required fields'
+                })
+                continue
+            
+            # Check for duplicate status updates
+            with db.get_db_connection() as conn:
+                cursor = conn.cursor()
+                
+                # Check webhook deduplication table using webhook_id
+                # Format: status_{whatsapp_message_id}_{status}
+                webhook_id = f"status_{whatsapp_message_id}_{status}"
+                
+                cursor.execute("""
+                    SELECT id FROM webhook_deduplication 
+                    WHERE webhook_id = ?
+                """, (webhook_id,))
+                
+                existing = cursor.fetchone()
+                
+                if existing:
+                    print(f"⚠️ Duplicate status webhook, ignoring")
+                    results.append({
+                        'status': 'ignored',
+                        'reason': 'Duplicate status update',
+                        'whatsapp_message_id': whatsapp_message_id
+                    })
+                    continue
+                
+                # Record this webhook
+                cursor.execute("""
+                    INSERT INTO webhook_deduplication 
+                    (webhook_id, webhook_type, phone, processed_at, payload_hash)
+                    VALUES (?, ?, ?, datetime('now'), ?)
+                """, (
+                    webhook_id,
+                    'status_update',
+                    recipient_id,
+                    str(hash(str(payload)))[:50]  # Simple hash for dedup
+                ))
+                
+                conn.commit()
+            
+            # Update message status
+            result = message_status_service.update_message_status(
+                whatsapp_message_id=whatsapp_message_id,
+                status=status,
+                timestamp=timestamp,
+                error_data=errors,
+                webhook_payload=payload
+            )
+            
+            results.append(result)
+        
+        # Summary
+        success_count = sum(1 for r in results if r.get('success'))
+        print(f"\n✅ Processed {success_count}/{len(statuses)} status updates")
+        
+        return {
+            'status': 'processed',
+            'total': len(statuses),
+            'success': success_count,
+            'results': results
+        }
+        
+    except Exception as e:
+        print(f"❌ Error handling status webhook: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            'status': 'error',
+            'error': str(e)
+        }
 
 
 # ============================================================================
@@ -334,6 +588,47 @@ def whatsapp_webhook():
         print(f"📦 Headers: {dict(request.headers)}")
         print(f"📦 Payload: {payload}")
         
+        # ============================================================================
+        # DEDUPLICATION CHECK - Stage 2.5
+        # Prevent duplicate webhook processing using payload hash
+        # ============================================================================
+        
+        # Extract unique webhook identifier
+        message = payload.get('message', {})
+        message_id = message.get('id')  # WhatsApp message ID
+        phone_number = message.get('from', '')
+        
+        # For status webhooks, use first status item
+        if 'statuses' in payload and payload['statuses']:
+            status_item = payload['statuses'][0]
+            message_id = status_item.get('id')
+            phone_number = status_item.get('recipient_id', '')
+        
+        # Check if webhook already processed
+        if message_id:
+            if dedup_service.is_webhook_processed(message_id, phone_number):
+                print(f"⚠️ Duplicate webhook detected, ignoring (message_id: {message_id})")
+                return jsonify({
+                    "status": "ignored", 
+                    "reason": "Duplicate webhook",
+                    "message_id": message_id
+                }), 200
+            
+            # Check using payload hash as well
+            payload_hash = dedup_service.compute_payload_hash(payload)
+            with db.get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT id FROM webhook_deduplication 
+                    WHERE payload_hash = ? AND processed_at > datetime('now', '-1 hour')
+                """, (payload_hash,))
+                if cursor.fetchone():
+                    print(f"⚠️ Duplicate webhook detected by payload hash, ignoring")
+                    return jsonify({
+                        "status": "ignored",
+                        "reason": "Duplicate webhook (payload hash match)"
+                    }), 200
+        
         # Acknowledge receipt immediately (Kapso expects 200 OK)
         
         # Check event type from header (Kapso uses X-Webhook-Event header)
@@ -356,6 +651,14 @@ def whatsapp_webhook():
         if message_type == 'text':
             result = handle_text_reply(message, message.get('from', ''))
             if result:
+                # Mark webhook as processed
+                if message_id:
+                    dedup_service.mark_webhook_processed(
+                        webhook_id=message_id,
+                        webhook_type='text_reply',
+                        phone=phone_number,
+                        payload=payload
+                    )
                 return jsonify(result), 200
             else:
                 return jsonify({"status": "ignored", "reason": "Untracked text message"}), 200
@@ -364,9 +667,24 @@ def whatsapp_webhook():
         if message_type in ['image', 'video', 'document', 'audio']:
             result = handle_media_reply(message, message.get('from', ''))
             if result:
+                # Mark webhook as processed
+                if message_id:
+                    dedup_service.mark_webhook_processed(
+                        webhook_id=message_id,
+                        webhook_type=f'media_{message_type}',
+                        phone=phone_number,
+                        payload=payload
+                    )
                 return jsonify(result), 200
             else:
                 return jsonify({"status": "ignored", "reason": "Untracked media message"}), 200
+        
+        # Handle status webhooks (delivery, read, failed)
+        # Kapso sends status updates in a 'statuses' array
+        if 'statuses' in payload:
+            result = handle_status_webhook(payload)
+            # Status webhook handler already marks as processed internally
+            return jsonify(result), 200
         
         # Check if this is an interactive button reply
         interactive = message.get('interactive', {})
@@ -400,6 +718,32 @@ def whatsapp_webhook():
             task_id = reply_option_id.replace('not_completed_', '')
             response_status = 'not_completed'
             new_task_status = 'in_progress'  # Keep in progress
+        # Handle clarification buttons (Stage 2.4)
+        elif reply_option_id.startswith('clarify_'):
+            print(f"📎 Processing clarification button: {reply_option_id}")
+            
+            result = clarification_service.handle_clarification_button(reply_option_id, phone_number)
+            
+            if result['success']:
+                # Mark webhook as processed
+                if message_id:
+                    dedup_service.mark_webhook_processed(
+                        webhook_id=message_id,
+                        webhook_type='clarification_button',
+                        phone=phone_number,
+                        payload=payload
+                    )
+                
+                return jsonify({
+                    'status': 'processed',
+                    'action': result.get('action', 'clarification_handled'),
+                    **result
+                }), 200
+            else:
+                return jsonify({
+                    'status': 'error',
+                    'error': result.get('error', 'Failed to handle clarification')
+                }), 200
         else:
             print(f"⚠️ Unknown button ID format: {reply_option_id}")
             return jsonify({"status": "ignored", "reason": "Unknown button ID"}), 200
@@ -464,6 +808,16 @@ def whatsapp_webhook():
         if result['success']:
             print(f"✅ Task {task_id} updated with WhatsApp response: {response_status}")
             print(f"📦 Task moved to status: {new_task_status}")
+            
+            # Mark webhook as processed (Stage 2.5 - Deduplication)
+            if message_id:
+                dedup_service.mark_webhook_processed(
+                    webhook_id=message_id,
+                    webhook_type='button_reply',
+                    phone=phone_number,
+                    payload=payload
+                )
+                print(f"✅ Webhook marked as processed (message_id: {message_id})")
             
             # Send confirmation message to employee
             # Clean phone number

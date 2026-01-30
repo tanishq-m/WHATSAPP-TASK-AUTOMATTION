@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS task_activities (
     
     -- Activity classification
     activity_type TEXT NOT NULL CHECK(activity_type IN ('comment', 'attachment', 'status_change', 'mention', 'system')),
-    source TEXT NOT NULL CHECK(source IN ('whatsapp_reply', 'whatsapp_reply_unlinked', 'form_submission', 'web_dashboard', 'system')),
+    source TEXT NOT NULL CHECK(source IN ('whatsapp_reply', 'whatsapp_reply_unlinked', 'whatsapp_clarification', 'form_submission', 'web_dashboard', 'system')),
     
     -- Content
     message TEXT,

@@ -111,6 +111,16 @@ def create_task():
         data.setdefault('priority', 'medium')
         data.setdefault('status', 'unassigned')
         
+        # Convert phone number to employee_id if assignedTo is a string (phone)
+        if data.get('assignedTo') and isinstance(data['assignedTo'], str):
+            phone = data['assignedTo']
+            employee_result = db.employees.get_employee_by_phone(phone)
+            if employee_result['success'] and employee_result.get('data'):
+                data['assignedTo'] = employee_result['data']['id']
+            else:
+                # If employee not found by phone, try as-is (might be employee_id already)
+                pass
+        
         result = db.tasks.create_task(data)
         
         if result['success']:
@@ -257,5 +267,95 @@ def get_task_activities(task_id):
         return jsonify({
             "success": False,
             "error": "Failed to fetch activities"
+        }), 500
+
+
+@tasks_bp.route('/tasks/<task_id>/activities', methods=['POST'])
+def create_task_activity(task_id):
+    """
+    Create a new activity (comment) for a task.
+    
+    Processes @mentions and sends WhatsApp notifications.
+    
+    Request body:
+        {
+            "authorType": "admin|employee|system",
+            "authorId": 1,
+            "authorName": "John Doe",
+            "activityType": "comment",
+            "source": "web_dashboard",
+            "message": "Comment with @mention"
+        }
+    
+    Returns:
+        JSON response with created activity
+    """
+    try:
+        data = request.get_json()
+        
+        print(f"📥 POST /api/tasks/{task_id}/activities - Creating activity")
+        
+        # Verify task exists
+        task_result = db.tasks.get_task_by_id(task_id)
+        if not task_result['success']:
+            return jsonify({
+                "success": False,
+                "error": "Task not found"
+            }), 404
+        
+        # Validate required fields
+        required_fields = ['authorType', 'activityType', 'source', 'message']
+        for field in required_fields:
+            if field not in data:
+                return jsonify({
+                    "success": False,
+                    "error": f"Missing required field: {field}"
+                }), 400
+        
+        # Create activity data
+        activity_data = {
+            'task_id': task_id,
+            'author_type': data['authorType'],
+            'author_id': data.get('authorId'),
+            'author_name': data.get('authorName', 'Unknown'),
+            'activity_type': data['activityType'],
+            'source': data['source'],
+            'message': data['message']
+        }
+        
+        # Create activity
+        activity_result = db.activities.create_activity(activity_data)
+        
+        if not activity_result['success']:
+            return jsonify(activity_result), 500
+        
+        activity_id = activity_result['data']['id']
+        print(f"✅ Created activity {activity_id} for task {task_id}")
+        
+        # Process @mentions
+        if data.get('message'):
+            import services.mention_service as mention_service
+            
+            mention_result = mention_service.process_mentions_in_comment(
+                task_id=task_id,
+                activity_id=activity_id,
+                comment_text=data['message'],
+                author_name=data.get('authorName', 'Someone')
+            )
+            
+            print(f"📢 Mention processing: {mention_result['mentions_found']} found, {mention_result['notifications_sent']} sent")
+        
+        return jsonify({
+            "success": True,
+            "data": activity_result['data']
+        }), 201
+        
+    except Exception as e:
+        print(f"❌ Error in create_task_activity endpoint: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            "success": False,
+            "error": "Failed to create activity"
         }), 500
 
