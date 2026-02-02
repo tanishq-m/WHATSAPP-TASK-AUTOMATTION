@@ -5,6 +5,8 @@ import { useApp } from '../../context/useApp'
 import TaskPriorityBadge from './TaskPriorityBadge'
 import EmployeeAvatar from '../employees/EmployeeAvatar'
 import ConfirmDialog from '../common/ConfirmDialog'
+import CommentBox from './CommentBox'
+import ActivityFeed from './ActivityFeed'
 
 const TaskCard = ({ task, onClick, isDragging = false }) => {
   const { getEmployeeById, getProjectById, sendTaskToWhatsApp, deleteTask } = useApp()

@@ -14,7 +14,7 @@ const SortableTaskCard = ({ task, onClick }) => {
     transform,
     transition,
     isDragging,
-    isOver
+    setActivatorNodeRef
   } = useSortable({ id: dragId })
 
   const style = {
@@ -30,15 +30,21 @@ const SortableTaskCard = ({ task, onClick }) => {
     <div
       ref={setNodeRef}
       style={style}
-      className={`w-full touch-manipulation select-none ${isDragging ? 'cursor-grabbing' : 'cursor-grab'}`}
+      className="w-full"
       {...attributes}
-      {...listeners}
     >
-      <TaskCard 
-        task={task} 
-        onClick={onClick}
-        isDragging={isDragging}
-      />
+      {/* Separate drag handle from click area */}
+      <div
+        ref={setActivatorNodeRef}
+        {...listeners}
+        className="w-full touch-manipulation"
+      >
+        <TaskCard 
+          task={task} 
+          onClick={onClick}
+          isDragging={isDragging}
+        />
+      </div>
     </div>
   )
 }

@@ -234,13 +234,7 @@ const TaskModal = ({ isOpen, onClose, task = null, projectId = null }) => {
           </div>
         </div>
 
-        {/* Activity Feed - Only show for existing tasks */}
-        {isEditing && task && (
-          <div className="pt-4 border-t border-gray-200">
-            <ActivityFeed taskId={task.id || task.taskId} />
-          </div>
-        )}
-
+        {/* Action Buttons */}
         <div className="flex flex-col gap-3 pt-4 border-t border-gray-200">
           {isEditing && (
             <Button
@@ -274,6 +268,13 @@ const TaskModal = ({ isOpen, onClose, task = null, projectId = null }) => {
           </div>
         </div>
       </form>
+
+      {/* Activity Feed - Show for all existing tasks (tasks with IDs) */}
+      {task && (task.id || task.taskId) && (
+        <div className="pt-4 border-t border-gray-200">
+          <ActivityFeed taskId={task.id || task.taskId} />
+        </div>
+      )}
     </Modal>
   )
 }
