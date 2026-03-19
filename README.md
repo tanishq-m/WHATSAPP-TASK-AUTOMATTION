@@ -74,11 +74,18 @@ pip install -r requirements.txt
 
 #### 2. Configure Backend
 
-Edit `backend/config.py` with your Kapso credentials:
+Copy the example environment file and fill in your Kapso credentials:
 
-```python
-KAPSO_API_KEY = "your_api_key_here"
-PHONE_NUMBER_ID = "your_phone_number_id_here"
+```bash
+cd backend
+cp .env.example .env
+```
+
+Edit `backend/.env` with your Kapso credentials:
+
+```env
+KAPSO_API_KEY=your_kapso_api_key_here
+PHONE_NUMBER_ID=your_phone_number_id_here
 ```
 
 Get these from: https://app.kapso.ai → WhatsApp → Sandbox
@@ -226,8 +233,9 @@ whatsapp-task-manager/
 ├── backend/
 │   ├── app.py                 # Flask API server
 │   ├── database.py            # SQLite CRUD operations
-│   ├── kapso_service.py       # WhatsApp API wrapper
-│   ├── config.py              # Configuration (API keys)
+│   ├── config.py              # Configuration (loads from .env)
+│   ├── .env                   # Environment variables (not in Git)
+│   ├── .env.example           # Template for .env setup
 │   ├── requirements.txt       # Python dependencies
 │   └── database.db            # SQLite database (auto-created)
 ├── src/
@@ -366,13 +374,14 @@ python3 app.py  # Will recreate with seed data
 ## 🔐 Security Notes
 
 **⚠️ For Development Only**
-- `config.py` contains hardcoded API keys
+- All secrets are stored in `backend/.env` (not committed to Git)
+- Use `backend/.env.example` as a template
 - CORS is wide open (`*`)
 - No authentication implemented
 - SQLite is not production-ready at scale
 
 **Before Production:**
-- Use environment variables for secrets
+- Use environment variables on your hosting platform
 - Implement proper authentication (JWT)
 - Switch to PostgreSQL/MySQL
 - Add rate limiting

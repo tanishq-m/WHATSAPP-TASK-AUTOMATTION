@@ -26,8 +26,8 @@ const ProjectCard = ({ project }) => {
     try {
       await deleteProject(project.id)
       setShowDeleteConfirm(false)
-      // Navigate to dashboard after deletion
-      navigate('/')
+      // No navigation needed - already on dashboard
+      // The project list will auto-refresh via AppContext
     } catch (error) {
       console.error('Failed to delete project:', error)
     }

@@ -1,5 +1,5 @@
 import { Link, useLocation } from 'react-router-dom'
-import { LayoutDashboard, Users, Clock, WifiOff } from 'lucide-react'
+import { Home, LayoutDashboard, Users, Clock, WifiOff } from 'lucide-react'
 import { useState } from 'react'
 import TimerSettingsModal from '../tasks/TimerSettingsModal'
 import { useApp } from '../../context/useApp'
@@ -12,6 +12,11 @@ const MobileNav = () => {
   const navItems = [
     {
       path: '/',
+      icon: Home,
+      label: 'Overview'
+    },
+    {
+      path: '/projects',
       icon: LayoutDashboard,
       label: 'Projects'
     },
@@ -24,7 +29,10 @@ const MobileNav = () => {
 
   const isActive = (path) => {
     if (path === '/') {
-      return location.pathname === '/' || location.pathname.startsWith('/project/')
+      return location.pathname === '/'
+    }
+    if (path === '/projects') {
+      return location.pathname === '/projects' || location.pathname.startsWith('/project/')
     }
     return location.pathname === path
   }

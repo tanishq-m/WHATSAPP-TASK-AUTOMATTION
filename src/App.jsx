@@ -1,6 +1,7 @@
 import { Routes, Route } from 'react-router-dom'
 import Navbar from './components/layout/Navbar'
 import MobileNav from './components/layout/MobileNav'
+import Overview from './pages/Overview'
 import Dashboard from './pages/Dashboard'
 import ProjectDetail from './pages/ProjectDetail'
 import Employees from './pages/Employees'
@@ -25,7 +26,8 @@ function App() {
             {/* Main Content */}
             <main className="flex-1 pb-20 md:pb-6">
               <Routes>
-                <Route path="/" element={<Dashboard />} />
+                <Route path="/" element={<Overview />} />
+                <Route path="/projects" element={<Dashboard />} />
                 <Route path="/project/:projectId" element={<ProjectDetail />} />
                 <Route path="/employees" element={<Employees />} />
               </Routes>

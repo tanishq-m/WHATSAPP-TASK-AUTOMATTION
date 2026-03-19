@@ -13,6 +13,7 @@ from api.whatsapp import whatsapp_bp
 from api.webhooks import webhooks_bp
 from api.submissions import submissions_bp
 from api.files import files_bp
+from api.dashboard import dashboard_bp
 
 # List of all blueprints to register
 all_blueprints = [
@@ -23,6 +24,7 @@ all_blueprints = [
     (webhooks_bp, '/api'),
     (files_bp, '/api'),
     (submissions_bp, None),  # Use blueprint's own url_prefix
+    (dashboard_bp, '/api'),  # Dashboard overview endpoints
 ]
 
 

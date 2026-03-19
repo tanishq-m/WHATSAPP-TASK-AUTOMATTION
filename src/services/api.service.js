@@ -5,8 +5,8 @@
  */
 
 // Base URL for Flask backend API
-// Change port to 5001 (macOS Control Center uses 5000)
-const API_BASE_URL = "http://localhost:5001/api";
+// Uses Vite env variable or defaults to localhost:5001
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:5001/api";
 
 /**
  * Transform snake_case keys from API to camelCase for frontend
@@ -551,6 +551,61 @@ export const getTaskWhatsAppStatus = async (taskId) => {
   }
 };
 
+/**
+ * Dashboard API Functions
+ */
+
+/**
+ * Get overall dashboard statistics
+ * @returns {Promise<Object>} Dashboard summary
+ */
+export const getDashboardSummary = async () => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/dashboard/summary`);
+    if (!response.ok) throw new Error('Failed to fetch dashboard summary');
+    
+    const data = await response.json();
+    return toCamelCase(data.data);
+  } catch (error) {
+    console.error('Error fetching dashboard summary:', error);
+    throw error;
+  }
+};
+
+/**
+ * Get per-project overview statistics
+ * @returns {Promise<Array>} Array of project summaries
+ */
+export const getProjectsOverview = async () => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/dashboard/projects-overview`);
+    if (!response.ok) throw new Error('Failed to fetch projects overview');
+    
+    const data = await response.json();
+    return toCamelCase(data.data);
+  } catch (error) {
+    console.error('Error fetching projects overview:', error);
+    throw error;
+  }
+};
+
+/**
+ * Get tasks that need attention
+ * @returns {Promise<Array>} Array of attention items
+ */
+export const getAttentionItems = async () => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/dashboard/attention-items`);
+    if (!response.ok) throw new Error('Failed to fetch attention items');
+    
+    const data = await response.json();
+    return toCamelCase(data.data);
+  } catch (error) {
+    console.error('Error fetching attention items:', error);
+    throw error;
+  }
+};
+
 // Export all API functions
 export default {
   getEmployees,
@@ -567,4 +622,7 @@ export default {
   deleteTask,
   sendTaskToWhatsApp,
   getTaskWhatsAppStatus,
+  getDashboardSummary,
+  getProjectsOverview,
+  getAttentionItems,
 };

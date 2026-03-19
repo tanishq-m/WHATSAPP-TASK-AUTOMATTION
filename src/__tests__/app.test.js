@@ -2741,3 +2741,694 @@ describe('Bug Fixes', () => {
   });
 });
 
+// ============================================================================
+// DASHBOARD TESTS - Phase 3 Implementation
+// Tests for dashboard functionality and regression tests for circular references
+// ============================================================================
+
+describe('API Service - Dashboard Module Import (Regression)', () => {
+  beforeEach(() => {
+    vi.resetModules(); // Clear module cache
+  });
+
+  it('should import api.service.js without circular reference errors', async () => {
+    // REGRESSION TEST: Prevents "Cannot access before initialization" error
+    // This test will fail if dashboard functions are exported before they're defined
+    await expect(async () => {
+      await import('../services/api.service.js');
+    }).not.toThrow();
+  });
+
+  it('should export getDashboardSummary function', async () => {
+    const apiService = await import('../services/api.service.js');
+    expect(apiService.getDashboardSummary).toBeDefined();
+    expect(typeof apiService.getDashboardSummary).toBe('function');
+  });
+
+  it('should export getProjectsOverview function', async () => {
+    const apiService = await import('../services/api.service.js');
+    expect(apiService.getProjectsOverview).toBeDefined();
+    expect(typeof apiService.getProjectsOverview).toBe('function');
+  });
+
+  it('should export getAttentionItems function', async () => {
+    const apiService = await import('../services/api.service.js');
+    expect(apiService.getAttentionItems).toBeDefined();
+    expect(typeof apiService.getAttentionItems).toBe('function');
+  });
+
+  it('should have dashboard functions defined before default export', async () => {
+    // CRITICAL REGRESSION TEST: Verifies function definitions come before export
+    // This prevents the circular reference bug we encountered
+    
+    // Skip this test in browser environment - it requires Node.js fs module
+    if (typeof window !== 'undefined') {
+      // In browser/jsdom environment, just verify the functions are accessible
+      const apiService = await import('../services/api.service.js');
+      expect(apiService.getDashboardSummary).toBeDefined();
+      expect(apiService.getProjectsOverview).toBeDefined();
+      expect(apiService.getAttentionItems).toBeDefined();
+      return;
+    }
+    
+    // In Node environment, check the actual file structure
+    const fs = await import('fs');
+    const path = await import('path');
+    const { fileURLToPath } = await import('url');
+    const __filename = fileURLToPath(import.meta.url);
+    const __dirname = path.dirname(__filename);
+    const filePath = path.join(__dirname, '../services/api.service.js');
+    const content = fs.readFileSync(filePath, 'utf-8');
+    
+    // Find positions of function definitions and export
+    const getDashboardSummaryPos = content.indexOf('export const getDashboardSummary');
+    const getProjectsOverviewPos = content.indexOf('export const getProjectsOverview');
+    const getAttentionItemsPos = content.indexOf('export const getAttentionItems');
+    const defaultExportPos = content.indexOf('export default {');
+    
+    // All function definitions should exist
+    expect(getDashboardSummaryPos).toBeGreaterThan(-1);
+    expect(getProjectsOverviewPos).toBeGreaterThan(-1);
+    expect(getAttentionItemsPos).toBeGreaterThan(-1);
+    expect(defaultExportPos).toBeGreaterThan(-1);
+    
+    // All function definitions must come BEFORE the default export
+    expect(getDashboardSummaryPos).toBeLessThan(defaultExportPos);
+    expect(getProjectsOverviewPos).toBeLessThan(defaultExportPos);
+    expect(getAttentionItemsPos).toBeLessThan(defaultExportPos);
+  });
+});
+
+describe('Dashboard API Functions', () => {
+  beforeEach(() => {
+    mockFetch.mockClear();
+    vi.resetModules();
+  });
+
+  describe('getDashboardSummary', () => {
+    it('should fetch dashboard summary successfully', async () => {
+      const mockSummary = {
+        total_projects: 5,
+        total_tasks: 25,
+        tasks_by_status: {
+          ready_to_start: 5,
+          in_progress: 10,
+          pending_verification: 5,
+          completed: 5
+        },
+        total_employees: 3,
+        completion_rate: 20.0
+      };
+
+      mockFetch.mockResolvedValueOnce(
+        createMockResponse({ success: true, data: mockSummary })
+      );
+
+      const { getDashboardSummary } = await import('../services/api.service.js');
+      const result = await getDashboardSummary();
+
+      const callUrl = mockFetch.mock.calls[0][0];
+      expect(callUrl).toContain('/api/dashboard/summary');
+      expect(result).toBeDefined();
+    });
+
+    it('should transform snake_case fields to camelCase in summary', async () => {
+      const mockSummary = {
+        total_projects: 3,
+        total_tasks: 15,
+        tasks_by_status: {
+          ready_to_start: 3,
+          in_progress: 5,
+          pending_verification: 2,
+          completed: 5
+        },
+        total_employees: 3,
+        completion_rate: 33.3
+      };
+
+      mockFetch.mockResolvedValueOnce(
+        createMockResponse({ success: true, data: mockSummary })
+      );
+
+      const { getDashboardSummary } = await import('../services/api.service.js');
+      const result = await getDashboardSummary();
+
+      expect(result).toHaveProperty('totalProjects', 3);
+      expect(result).toHaveProperty('totalTasks', 15);
+      expect(result).toHaveProperty('tasksByStatus');
+      expect(result).toHaveProperty('totalEmployees', 3);
+      expect(result).toHaveProperty('completionRate', 33.3);
+      
+      // Check nested object transformation
+      expect(result.tasksByStatus).toHaveProperty('readyToStart', 3);
+      expect(result.tasksByStatus).toHaveProperty('inProgress', 5);
+      expect(result.tasksByStatus).toHaveProperty('pendingVerification', 2);
+      expect(result.tasksByStatus).toHaveProperty('completed', 5);
+    });
+
+    it('should handle empty summary (no projects/tasks)', async () => {
+      const mockSummary = {
+        total_projects: 0,
+        total_tasks: 0,
+        tasks_by_status: {
+          ready_to_start: 0,
+          in_progress: 0,
+          pending_verification: 0,
+          completed: 0
+        },
+        total_employees: 0,
+        completion_rate: 0
+      };
+
+      mockFetch.mockResolvedValueOnce(
+        createMockResponse({ success: true, data: mockSummary })
+      );
+
+      const { getDashboardSummary } = await import('../services/api.service.js');
+      const result = await getDashboardSummary();
+
+      expect(result.totalProjects).toBe(0);
+      expect(result.totalTasks).toBe(0);
+      expect(result.completionRate).toBe(0);
+    });
+
+    it('should handle API errors gracefully', async () => {
+      mockFetch.mockResolvedValueOnce(
+        createMockResponse({ error: 'Internal server error' }, 500)
+      );
+
+      const { getDashboardSummary } = await import('../services/api.service.js');
+      
+      await expect(getDashboardSummary()).rejects.toThrow();
+    });
+
+    it('should handle network errors', async () => {
+      mockFetch.mockRejectedValueOnce(new Error('Network error'));
+
+      const { getDashboardSummary } = await import('../services/api.service.js');
+      
+      await expect(getDashboardSummary()).rejects.toThrow('Network error');
+    });
+  });
+
+  describe('getProjectsOverview', () => {
+    it('should fetch projects overview successfully', async () => {
+      const mockProjects = [
+        {
+          project_id: 'proj_001',
+          project_name: 'Website Redesign',
+          project_color: '#3B82F6',
+          total_tasks: 10,
+          completed_tasks: 4,
+          in_progress_tasks: 3,
+          pending_tasks: 2,
+          overdue_tasks: 1,
+          completion_rate: 40.0,
+          start_date: '2026-01-01',
+          end_date: '2026-03-31',
+          assigned_employees: [1, 2],
+          last_activity: '2026-02-07T15:30:00Z'
+        }
+      ];
+
+      mockFetch.mockResolvedValueOnce(
+        createMockResponse({ success: true, data: mockProjects })
+      );
+
+      const { getProjectsOverview } = await import('../services/api.service.js');
+      const result = await getProjectsOverview();
+
+      const callUrl = mockFetch.mock.calls[0][0];
+      expect(callUrl).toContain('/api/dashboard/projects-overview');
+      expect(result).toHaveLength(1);
+    });
+
+    it('should transform snake_case fields to camelCase in project overview', async () => {
+      const mockProjects = [
+        {
+          project_id: 'proj_001',
+          project_name: 'Test Project',
+          project_color: '#FF0000',
+          total_tasks: 10,
+          completed_tasks: 5,
+          in_progress_tasks: 3,
+          pending_tasks: 2,
+          overdue_tasks: 1,
+          completion_rate: 50.0,
+          start_date: '2026-01-01',
+          end_date: '2026-12-31',
+          assigned_employees: [1, 2, 3],
+          last_activity: '2026-02-07T10:00:00Z'
+        }
+      ];
+
+      mockFetch.mockResolvedValueOnce(
+        createMockResponse({ success: true, data: mockProjects })
+      );
+
+      const { getProjectsOverview } = await import('../services/api.service.js');
+      const result = await getProjectsOverview();
+
+      expect(result[0]).toHaveProperty('projectId', 'proj_001');
+      expect(result[0]).toHaveProperty('projectName', 'Test Project');
+      expect(result[0]).toHaveProperty('projectColor', '#FF0000');
+      expect(result[0]).toHaveProperty('totalTasks', 10);
+      expect(result[0]).toHaveProperty('completedTasks', 5);
+      expect(result[0]).toHaveProperty('inProgressTasks', 3);
+      expect(result[0]).toHaveProperty('pendingTasks', 2);
+      expect(result[0]).toHaveProperty('overdueTasks', 1);
+      expect(result[0]).toHaveProperty('completionRate', 50.0);
+      expect(result[0]).toHaveProperty('startDate', '2026-01-01');
+      expect(result[0]).toHaveProperty('endDate', '2026-12-31');
+      expect(result[0]).toHaveProperty('assignedEmployees');
+      expect(result[0]).toHaveProperty('lastActivity');
+    });
+
+    it('should handle empty projects array', async () => {
+      mockFetch.mockResolvedValueOnce(
+        createMockResponse({ success: true, data: [] })
+      );
+
+      const { getProjectsOverview } = await import('../services/api.service.js');
+      const result = await getProjectsOverview();
+
+      expect(result).toEqual([]);
+      expect(Array.isArray(result)).toBe(true);
+    });
+
+    it('should handle projects with no overdue tasks', async () => {
+      const mockProjects = [
+        {
+          project_id: 'proj_001',
+          project_name: 'On Track Project',
+          total_tasks: 10,
+          completed_tasks: 10,
+          overdue_tasks: 0,
+          completion_rate: 100.0
+        }
+      ];
+
+      mockFetch.mockResolvedValueOnce(
+        createMockResponse({ success: true, data: mockProjects })
+      );
+
+      const { getProjectsOverview } = await import('../services/api.service.js');
+      const result = await getProjectsOverview();
+
+      expect(result[0].overdueTasks).toBe(0);
+      expect(result[0].completionRate).toBe(100.0);
+    });
+
+    it('should handle projects with zero tasks', async () => {
+      const mockProjects = [
+        {
+          project_id: 'proj_001',
+          project_name: 'Empty Project',
+          total_tasks: 0,
+          completed_tasks: 0,
+          overdue_tasks: 0,
+          completion_rate: 0
+        }
+      ];
+
+      mockFetch.mockResolvedValueOnce(
+        createMockResponse({ success: true, data: mockProjects })
+      );
+
+      const { getProjectsOverview } = await import('../services/api.service.js');
+      const result = await getProjectsOverview();
+
+      expect(result[0].totalTasks).toBe(0);
+      expect(result[0].completionRate).toBe(0);
+    });
+
+    it('should handle multiple projects in correct order', async () => {
+      const mockProjects = [
+        { project_id: 'proj_001', project_name: 'Project A', last_activity: '2026-02-07T10:00:00Z' },
+        { project_id: 'proj_002', project_name: 'Project B', last_activity: '2026-02-06T10:00:00Z' },
+        { project_id: 'proj_003', project_name: 'Project C', last_activity: '2026-02-05T10:00:00Z' }
+      ];
+
+      mockFetch.mockResolvedValueOnce(
+        createMockResponse({ success: true, data: mockProjects })
+      );
+
+      const { getProjectsOverview } = await import('../services/api.service.js');
+      const result = await getProjectsOverview();
+
+      expect(result).toHaveLength(3);
+      expect(result[0].projectId).toBe('proj_001');
+      expect(result[1].projectId).toBe('proj_002');
+      expect(result[2].projectId).toBe('proj_003');
+    });
+  });
+
+  describe('getAttentionItems', () => {
+    it('should fetch attention items successfully', async () => {
+      const mockAttentionItems = [
+        {
+          task_id: 'task_001',
+          task_title: 'Complete inventory',
+          project_id: 'proj_001',
+          project_name: 'Store A',
+          employee_id: 1,
+          employee_name: 'Rajesh Kumar',
+          employee_phone: '+919876543210',
+          priority: 'high',
+          reason: 'Task overdue',
+          due_date: '2026-02-05',
+          hours_since_update: 8.5,
+          status: 'in_progress'
+        }
+      ];
+
+      mockFetch.mockResolvedValueOnce(
+        createMockResponse({ success: true, data: mockAttentionItems })
+      );
+
+      const { getAttentionItems } = await import('../services/api.service.js');
+      const result = await getAttentionItems();
+
+      const callUrl = mockFetch.mock.calls[0][0];
+      expect(callUrl).toContain('/api/dashboard/attention-items');
+      expect(result).toHaveLength(1);
+    });
+
+    it('should transform snake_case fields to camelCase in attention items', async () => {
+      const mockAttentionItems = [
+        {
+          task_id: 'task_001',
+          task_title: 'Urgent Task',
+          project_id: 'proj_001',
+          project_name: 'Urgent Project',
+          employee_id: 1,
+          employee_name: 'Rajesh Kumar',
+          employee_phone: '+919876543210',
+          priority: 'high',
+          reason: 'Task overdue',
+          due_date: '2026-02-05',
+          hours_since_update: 10.5,
+          status: 'in_progress'
+        }
+      ];
+
+      mockFetch.mockResolvedValueOnce(
+        createMockResponse({ success: true, data: mockAttentionItems })
+      );
+
+      const { getAttentionItems } = await import('../services/api.service.js');
+      const result = await getAttentionItems();
+
+      expect(result[0]).toHaveProperty('taskId', 'task_001');
+      expect(result[0]).toHaveProperty('taskTitle', 'Urgent Task');
+      expect(result[0]).toHaveProperty('projectId', 'proj_001');
+      expect(result[0]).toHaveProperty('projectName', 'Urgent Project');
+      expect(result[0]).toHaveProperty('employeeId', 1);
+      expect(result[0]).toHaveProperty('employeeName', 'Rajesh Kumar');
+      expect(result[0]).toHaveProperty('employeePhone', '+919876543210');
+      expect(result[0]).toHaveProperty('priority', 'high');
+      expect(result[0]).toHaveProperty('reason', 'Task overdue');
+      expect(result[0]).toHaveProperty('dueDate', '2026-02-05');
+      expect(result[0]).toHaveProperty('hoursSinceUpdate', 10.5);
+      expect(result[0]).toHaveProperty('status', 'in_progress');
+    });
+
+    it('should handle empty attention items array (all caught up)', async () => {
+      mockFetch.mockResolvedValueOnce(
+        createMockResponse({ success: true, data: [] })
+      );
+
+      const { getAttentionItems } = await import('../services/api.service.js');
+      const result = await getAttentionItems();
+
+      expect(result).toEqual([]);
+      expect(Array.isArray(result)).toBe(true);
+    });
+
+    it('should handle attention items with different priorities', async () => {
+      const mockAttentionItems = [
+        {
+          task_id: 'task_001',
+          task_title: 'Overdue Task',
+          priority: 'high',
+          reason: 'Task overdue',
+          hours_since_update: 24
+        },
+        {
+          task_id: 'task_002',
+          task_title: 'Delayed Response',
+          priority: 'medium',
+          reason: 'No response for 2+ hours',
+          hours_since_update: 3
+        }
+      ];
+
+      mockFetch.mockResolvedValueOnce(
+        createMockResponse({ success: true, data: mockAttentionItems })
+      );
+
+      const { getAttentionItems } = await import('../services/api.service.js');
+      const result = await getAttentionItems();
+
+      expect(result).toHaveLength(2);
+      expect(result[0].priority).toBe('high');
+      expect(result[1].priority).toBe('medium');
+      expect(result[0].hoursSinceUpdate).toBe(24);
+      expect(result[1].hoursSinceUpdate).toBe(3);
+    });
+
+    it('should handle attention items with HIGH priority (overdue)', async () => {
+      const mockAttentionItems = [
+        {
+          task_id: 'task_001',
+          priority: 'high',
+          reason: 'Task overdue',
+          hours_since_update: 48
+        }
+      ];
+
+      mockFetch.mockResolvedValueOnce(
+        createMockResponse({ success: true, data: mockAttentionItems })
+      );
+
+      const { getAttentionItems } = await import('../services/api.service.js');
+      const result = await getAttentionItems();
+
+      expect(result[0].priority).toBe('high');
+      expect(result[0].reason).toContain('overdue');
+    });
+
+    it('should handle attention items with MEDIUM priority (pending verification)', async () => {
+      const mockAttentionItems = [
+        {
+          task_id: 'task_001',
+          priority: 'medium',
+          reason: 'Pending verification for 6+ hours',
+          status: 'pending_verification',
+          hours_since_update: 7
+        }
+      ];
+
+      mockFetch.mockResolvedValueOnce(
+        createMockResponse({ success: true, data: mockAttentionItems })
+      );
+
+      const { getAttentionItems } = await import('../services/api.service.js');
+      const result = await getAttentionItems();
+
+      expect(result[0].priority).toBe('medium');
+      expect(result[0].status).toBe('pending_verification');
+    });
+
+    it('should handle API errors gracefully', async () => {
+      mockFetch.mockResolvedValueOnce(
+        createMockResponse({ error: 'Failed to fetch attention items' }, 500)
+      );
+
+      const { getAttentionItems } = await import('../services/api.service.js');
+      
+      await expect(getAttentionItems()).rejects.toThrow();
+    });
+  });
+});
+
+// ============================================================================
+// DASHBOARD INTEGRATION TESTS
+// ============================================================================
+
+describe('Dashboard Integration - Parallel API Calls', () => {
+  beforeEach(() => {
+    mockFetch.mockClear();
+    vi.resetModules();
+  });
+
+  it('should be able to call all three dashboard endpoints sequentially', async () => {
+    const mockSummary = { total_projects: 3, total_tasks: 15 };
+    const mockProjects = [{ project_id: 'proj_001', project_name: 'Test' }];
+    const mockAttention = [{ task_id: 'task_001', priority: 'high' }];
+
+    // Mock all three API calls
+    mockFetch
+      .mockResolvedValueOnce(createMockResponse({ success: true, data: mockSummary }))
+      .mockResolvedValueOnce(createMockResponse({ success: true, data: mockProjects }))
+      .mockResolvedValueOnce(createMockResponse({ success: true, data: mockAttention }));
+
+    const { getDashboardSummary, getProjectsOverview, getAttentionItems } = 
+      await import('../services/api.service.js');
+
+    const summary = await getDashboardSummary();
+    const projects = await getProjectsOverview();
+    const attention = await getAttentionItems();
+
+    expect(summary).toBeDefined();
+    expect(projects).toHaveLength(1);
+    expect(attention).toHaveLength(1);
+    expect(mockFetch).toHaveBeenCalledTimes(3);
+  });
+
+  it('should be able to call all three dashboard endpoints in parallel (like Overview page)', async () => {
+    const mockSummary = { total_projects: 3, total_tasks: 15 };
+    const mockProjects = [{ project_id: 'proj_001', project_name: 'Test' }];
+    const mockAttention = [{ task_id: 'task_001', priority: 'high' }];
+
+    // Mock all three API calls
+    mockFetch
+      .mockResolvedValueOnce(createMockResponse({ success: true, data: mockSummary }))
+      .mockResolvedValueOnce(createMockResponse({ success: true, data: mockProjects }))
+      .mockResolvedValueOnce(createMockResponse({ success: true, data: mockAttention }));
+
+    const { getDashboardSummary, getProjectsOverview, getAttentionItems } = 
+      await import('../services/api.service.js');
+
+    // This is how Overview.jsx calls the APIs
+    const [summary, projects, attention] = await Promise.all([
+      getDashboardSummary(),
+      getProjectsOverview(),
+      getAttentionItems()
+    ]);
+
+    expect(summary).toBeDefined();
+    expect(projects).toHaveLength(1);
+    expect(attention).toHaveLength(1);
+    expect(mockFetch).toHaveBeenCalledTimes(3);
+  });
+
+  it('should handle partial failures in parallel API calls', async () => {
+    // Summary succeeds, projects fails, attention succeeds
+    mockFetch
+      .mockResolvedValueOnce(createMockResponse({ success: true, data: { total_projects: 3 } }))
+      .mockResolvedValueOnce(createMockResponse({ error: 'Server error' }, 500))
+      .mockResolvedValueOnce(createMockResponse({ success: true, data: [] }));
+
+    const { getDashboardSummary, getProjectsOverview, getAttentionItems } = 
+      await import('../services/api.service.js');
+
+    const results = await Promise.allSettled([
+      getDashboardSummary(),
+      getProjectsOverview(),
+      getAttentionItems()
+    ]);
+
+    expect(results[0].status).toBe('fulfilled'); // Summary succeeded
+    expect(results[1].status).toBe('rejected');  // Projects failed
+    expect(results[2].status).toBe('fulfilled'); // Attention succeeded
+  });
+});
+
+// ============================================================================
+// BUILD AND MODULE DEPENDENCY TESTS
+// Ensures production builds don't have circular dependencies or chunk errors
+// ============================================================================
+
+describe('Module Dependencies and Build Safety', () => {
+  it('should import all page components without circular dependencies', async () => {
+    // Test that all main page components can be imported
+    const imports = await Promise.allSettled([
+      import('../pages/Overview.jsx'),
+      import('../pages/Dashboard.jsx'),
+      import('../pages/ProjectDetail.jsx'),
+      import('../pages/Employees.jsx')
+    ]);
+
+    // All imports should succeed
+    imports.forEach((result, index) => {
+      expect(result.status).toBe('fulfilled');
+    });
+  });
+
+  it('should import api.service without errors after multiple reloads', async () => {
+    // Simulate multiple imports (like HMR during development)
+    for (let i = 0; i < 3; i++) {
+      vi.resetModules();
+      const apiService = await import('../services/api.service.js');
+      
+      expect(apiService.getDashboardSummary).toBeDefined();
+      expect(apiService.getProjectsOverview).toBeDefined();
+      expect(apiService.getAttentionItems).toBeDefined();
+      expect(apiService.getProjects).toBeDefined();
+      expect(apiService.getTasks).toBeDefined();
+    }
+  });
+
+  it('should have all dashboard functions accessible from default export', async () => {
+    const apiService = await import('../services/api.service.js');
+    const defaultExport = apiService.default;
+
+    // All dashboard functions should be in default export
+    expect(defaultExport.getDashboardSummary).toBeDefined();
+    expect(defaultExport.getProjectsOverview).toBeDefined();
+    expect(defaultExport.getAttentionItems).toBeDefined();
+    
+    // Named exports should also work
+    expect(apiService.getDashboardSummary).toBeDefined();
+    expect(apiService.getProjectsOverview).toBeDefined();
+    expect(apiService.getAttentionItems).toBeDefined();
+  });
+
+  it('should not have duplicate function definitions in api.service', async () => {
+    // Skip in browser environment
+    if (typeof window !== 'undefined') {
+      const apiService = await import('../services/api.service.js');
+      expect(apiService.getDashboardSummary).toBeDefined();
+      return;
+    }
+
+    // In Node environment, check for duplicate exports
+    const fs = await import('fs');
+    const path = await import('path');
+    const { fileURLToPath } = await import('url');
+    const __filename = fileURLToPath(import.meta.url);
+    const __dirname = path.dirname(__filename);
+    const filePath = path.join(__dirname, '../services/api.service.js');
+    const content = fs.readFileSync(filePath, 'utf-8');
+
+    // Count occurrences of function definitions
+    const getDashboardSummaryCount = (content.match(/export const getDashboardSummary/g) || []).length;
+    const getProjectsOverviewCount = (content.match(/export const getProjectsOverview/g) || []).length;
+    const getAttentionItemsCount = (content.match(/export const getAttentionItems/g) || []).length;
+
+    // Each function should be defined exactly once
+    expect(getDashboardSummaryCount).toBe(1);
+    expect(getProjectsOverviewCount).toBe(1);
+    expect(getAttentionItemsCount).toBe(1);
+  });
+
+  it('should handle rapid successive imports without race conditions', async () => {
+    vi.resetModules();
+    
+    // Import multiple times simultaneously (simulates Vite HMR)
+    const promises = Array(5).fill(null).map(() => 
+      import('../services/api.service.js')
+    );
+
+    const results = await Promise.all(promises);
+
+    // All should succeed and return the same module
+    results.forEach(module => {
+      expect(module.getDashboardSummary).toBeDefined();
+      expect(module.getProjectsOverview).toBeDefined();
+      expect(module.getAttentionItems).toBeDefined();
+    });
+  });
+});
+

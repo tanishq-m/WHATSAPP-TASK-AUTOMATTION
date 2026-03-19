@@ -7,11 +7,7 @@ including sending text messages, interactive buttons, and task assignments.
 
 import requests
 from datetime import datetime
-
-# Hardcoded credentials (config.py wasn't reloading properly)
-KAPSO_API_KEY = "7819cb622458c2ca2e3300008d391d85d39b962ee2b9996e8a562fa9408a5f81"
-PHONE_NUMBER_ID = "597907523413541"
-KAPSO_API_BASE = "https://api.kapso.ai/meta/whatsapp/v24.0"
+from config import KAPSO_API_KEY, PHONE_NUMBER_ID, KAPSO_API_BASE
 
 
 def send_text_message(phone_number, message_text):
